@@ -21,13 +21,16 @@ class SendJointTraj(Node):
         self.return_back = bool(self.get_parameter('return_back').value)
 
         self.pub = self.create_publisher(JointTrajectory, self.topic, 10)
-        self.sub = self.create_subscription(JointState, '/joint_states', self._on_js, 10)
+
+        self.declare_parameter('joint_states_topic', '/ufactory/joint_states')
+        self.joint_states_topic = self.get_parameter('joint_states_topic').value
+        self.sub = self.create_subscription(JointState, self.joint_states_topic, self._on_js, 10)
 
         self._last_js = None
         self._sent = False
 
         self.get_logger().info(f'Publishing to {self.topic}')
-        self.get_logger().info('Waiting for /joint_states...')
+        self.get_logger().info('Waiting for joint states on {self.joint_states_topic}...')
 
     def _on_js(self, msg: JointState):
         self._last_js = msg
