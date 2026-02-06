@@ -65,7 +65,11 @@ class RunAndRecord(Node):
 
     def _call(self, cli, req, name):
         fut = cli.call_async(req)
-        rclpy.spin_until_future_complete(self, fut, timeout_sec=self.timeout)
+        from rclpy.executors import SingleThreadedExecutor
+        ex = SingleThreadedExecutor()
+        ex.add_node(self)
+        ex.spin_until_future_complete(fut, timeout_sec=self.timeout)
+        ex.remove_node(self)
         if not fut.done():
             raise RuntimeError(f'timeout calling {name}')
         return fut.result()
