@@ -127,6 +127,34 @@ class RunAndRecord(Node):
         s = SetInt16.Request(); s.data = 0
         self._call(self.cli_set_state, s, 'set_state')
 
+    def assert_near_zero(self, tol=0.05):
+        # Check current joint1 position is near 0 using /ufactory/joint_states
+        import rclpy
+        from sensor_msgs.msg import JointState
+        msg_holder = {}
+        def cb(msg):
+            msg_holder['msg'] = msg
+        sub = self.create_subscription(JointState, '/ufactory/joint_states', cb, 10)
+        start = time.time()
+        while time.time() - start < 2.0 and 'msg' not in msg_holder:
+            rclpy.spin_once(self, timeout_sec=0.1)
+        try:
+            sub.destroy()
+        except Exception:
+            pass
+        msg = msg_holder.get('msg')
+        if not msg:
+            self.get_logger().warn('No /ufactory/joint_states received; skipping zero check')
+            return
+        name_to_pos = {n:p for n,p in zip(msg.name, msg.position)}
+        j1 = float(name_to_pos.get('joint1', 0.0))
+        if abs(j1) > tol:
+            raise RuntimeError(f'Robot not at zero: joint1={j1:.3f} rad (tol={tol})')
+
+    def go_zero(self):
+        self.get_logger().info('Going to zero position (all joints = 0)')
+        self.move_abs([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+
     def move_abs(self, angles):
         req = MoveJoint.Request()
         req.angles = [float(a) for a in angles]
@@ -146,11 +174,14 @@ class RunAndRecord(Node):
             self.arm_ready()
             self.start_recording()
 
-            # motion sequence: 0 -> target -> 0 (joint1 only)
+            # Ensure starting at zero
+            self.go_zero()
+            self.assert_near_zero()
+
             self.get_logger().info(f'Moving base joint to {self.j1_target} rad and back')
-            self.move_abs([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
             self.move_abs([self.j1_target, 0.0, 0.0, 0.0, 0.0, 0.0])
-            self.move_abs([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+            # Always return to zero at end
+            self.go_zero()
 
         finally:
             self.stop_recording()
