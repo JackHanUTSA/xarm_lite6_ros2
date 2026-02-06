@@ -11,6 +11,15 @@ from xarm_msgs.srv import Call, SetInt16, SetInt16ById, MoveJoint
 
 
 class RunAndRecord(Node):
+    def ros2_service_call(self, cmd: str):
+        # Run via shell to avoid rclpy executor invalid-handle issues
+        import subprocess
+        full = ["bash", "-lc", cmd]
+        p = subprocess.run(full, capture_output=True, text=True)
+        if p.returncode != 0:
+            raise RuntimeError(f"Command failed ({p.returncode}): {cmd}\nSTDOUT:\n{p.stdout}\nSTDERR:\n{p.stderr}")
+        return p.stdout
+
     def __init__(self):
         super().__init__('run_and_record')
 
@@ -48,36 +57,11 @@ class RunAndRecord(Node):
 
         ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         self.out_path = os.path.join(self.out_dir, f'robot-{ts}.mp4')
-
-        # Services
-        self.cli_clean_error = self.create_client(Call, '/ufactory/clean_error')
-        self.cli_clean_warn = self.create_client(Call, '/ufactory/clean_warn')
-        self.cli_motion_enable = self.create_client(SetInt16ById, '/ufactory/motion_enable')
-        self.cli_set_mode = self.create_client(SetInt16, '/ufactory/set_mode')
-        self.cli_set_state = self.create_client(SetInt16, '/ufactory/set_state')
-        self.cli_move_joint = self.create_client(MoveJoint, '/ufactory/set_servo_angle')
-
         self.ff = None
 
     def _wait_srv(self, cli, name, timeout=10.0):
         if not cli.wait_for_service(timeout_sec=timeout):
             raise RuntimeError(f'service not available: {name}')
-
-    def _call(self, cli, req, name):
-        fut = cli.call_async(req)
-        from rclpy.executors import SingleThreadedExecutor
-        ex = SingleThreadedExecutor()
-        ex.add_node(self)
-        ex.spin_until_future_complete(fut, timeout_sec=self.timeout)
-        try:
-            ex.remove_node(self)
-        except Exception:
-            pass
-        ex.shutdown()
-        if not fut.done():
-            raise RuntimeError(f'timeout calling {name}')
-        return fut.result()
-
     def start_recording(self):
         cmd = [
             'ffmpeg', '-hide_banner', '-loglevel', 'warning',
@@ -111,74 +95,44 @@ class RunAndRecord(Node):
 
     def arm_ready(self):
         # best-effort clear + enable + mode/state
-        self._wait_srv(self.cli_clean_error, 'clean_error')
-        self._wait_srv(self.cli_motion_enable, 'motion_enable')
-        self._wait_srv(self.cli_set_mode, 'set_mode')
-        self._wait_srv(self.cli_set_state, 'set_state')
-        self._wait_srv(self.cli_move_joint, 'set_servo_angle')
-
-        self._call(self.cli_clean_error, Call.Request(), 'clean_error')
-        # clean_warn may not always succeed; ignore failures
+        self.ros2_service_call(
+            'cd ~/ws_xarm && source /opt/ros/humble/setup.bash && source ~/ws_xarm/install/setup.bash && ' +
+            'ros2 service call /ufactory/clean_error xarm_msgs/srv/Call "{}"'
+        )
         try:
-            self._wait_srv(self.cli_clean_warn, 'clean_warn', timeout=2.0)
-            self._call(self.cli_clean_warn, Call.Request(), 'clean_warn')
+            self.ros2_service_call(
+                'cd ~/ws_xarm && source /opt/ros/humble/setup.bash && source ~/ws_xarm/install/setup.bash && ' +
+                'ros2 service call /ufactory/clean_warn xarm_msgs/srv/Call \"{}\"'
+            )
         except Exception:
             pass
-
-        me = SetInt16ById.Request()
-        me.id = 8
-        me.data = 1
-        self._call(self.cli_motion_enable, me, 'motion_enable')
-
-        m = SetInt16.Request(); m.data = 0
-        self._call(self.cli_set_mode, m, 'set_mode')
-
-        s = SetInt16.Request(); s.data = 0
-        self._call(self.cli_set_state, s, 'set_state')
-
-    def assert_near_zero(self, tol=0.05):
-        # Check current joint1 position is near 0 using /ufactory/joint_states
-        import rclpy
-        from sensor_msgs.msg import JointState
-        msg_holder = {}
-        def cb(msg):
-            msg_holder['msg'] = msg
-        sub = self.create_subscription(JointState, '/ufactory/joint_states', cb, 10)
-        start = time.time()
-        while time.time() - start < 2.0 and 'msg' not in msg_holder:
-            rclpy.spin_once(self, timeout_sec=0.1)
-        try:
-            sub.destroy()
-        except Exception:
-            pass
-        msg = msg_holder.get('msg')
-        if not msg:
-            self.get_logger().warn('No /ufactory/joint_states received; skipping zero check')
-            return
-        name_to_pos = {n:p for n,p in zip(msg.name, msg.position)}
-        j1 = float(name_to_pos.get('joint1', 0.0))
-        if abs(j1) > tol:
-            raise RuntimeError(f'Robot not at zero: joint1={j1:.3f} rad (tol={tol})')
-
-    def go_zero(self):
-        self.get_logger().info('Going to zero position (all joints = 0)')
-        self.move_abs([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        self.ros2_service_call(
+            'cd ~/ws_xarm && source /opt/ros/humble/setup.bash && source ~/ws_xarm/install/setup.bash && ' +
+            'ros2 service call /ufactory/motion_enable xarm_msgs/srv/SetInt16ById "{id: 8, data: 1}"'
+        )
+        self.ros2_service_call(
+            'cd ~/ws_xarm && source /opt/ros/humble/setup.bash && source ~/ws_xarm/install/setup.bash && ' +
+            'ros2 service call /ufactory/set_mode xarm_msgs/srv/SetInt16 "{data: 0}"'
+        )
+        self.ros2_service_call(
+            'cd ~/ws_xarm && source /opt/ros/humble/setup.bash && source ~/ws_xarm/install/setup.bash && ' +
+            'ros2 service call /ufactory/set_state xarm_msgs/srv/SetInt16 "{data: 0}"'
+        )
 
     def move_abs(self, angles):
-        req = MoveJoint.Request()
-        req.angles = [float(a) for a in angles]
-        req.speed = float(self.speed)
-        req.acc = float(self.acc)
-        req.mvtime = 0.0
-        req.wait = True
-        req.timeout = float(self.timeout)
-        req.radius = -1.0
-        req.relative = False
-        res = self._call(self.cli_move_joint, req, 'set_servo_angle')
-        if res.ret != 0:
-            raise RuntimeError(f'move failed ret={res.ret} msg={res.message!r}')
+        # angles in radians, absolute
+        angles_str = '[' + ', '.join(f'{float(a):.6f}' for a in angles) + ']'
+        cmd = (
+            'cd ~/ws_xarm && source /opt/ros/humble/setup.bash && source ~/ws_xarm/install/setup.bash && ' +
+            'ros2 service call /ufactory/set_servo_angle xarm_msgs/srv/MoveJoint ' +
+            f"\"{{angles: {angles_str}, speed: {self.speed}, acc: {self.acc}, mvtime: 0.0, wait: true, timeout: {self.timeout}, radius: -1.0, relative: false}}\""
+        )
+        out = self.ros2_service_call(cmd)
+        if 'ret=0' not in out and 'ret: 0' not in out:
+            raise RuntimeError('MoveJoint did not report success')
 
     def run(self):
+
         try:
             self.arm_ready()
             self.start_recording()
