@@ -77,9 +77,10 @@ class RunAndRecord(Node):
             '-f', 'video4linux2', '-framerate', str(self.fps), '-video_size', self.size, '-i', self.cam_left,
             '-thread_queue_size', '512',
             '-f', 'video4linux2', '-framerate', str(self.fps), '-video_size', self.size, '-i', self.cam_right,
-            '-filter_complex', '[0:v][1:v]hstack=inputs=2',
+            '-filter_complex', '[0:v]scale=640:720[l];[1:v]scale=640:720[r];[l][r]hstack=inputs=2',
             '-c:v', 'libx264', '-preset', self.preset, '-crf', str(self.crf),
             '-pix_fmt', 'yuv420p',
+            '-movflags', '+faststart',
             self.out_path,
         ]
         self.get_logger().info(f'Starting recording -> {self.out_path}')
