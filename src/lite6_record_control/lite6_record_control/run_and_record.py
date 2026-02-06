@@ -138,13 +138,12 @@ class RunAndRecord(Node):
             self.start_recording()
 
             # Ensure starting at zero
-            self.go_zero()
-            self.assert_near_zero()
+            self.move_abs([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
             self.get_logger().info(f'Moving base joint to {self.j1_target} rad and back')
             self.move_abs([self.j1_target, 0.0, 0.0, 0.0, 0.0, 0.0])
             # Always return to zero at end
-            self.go_zero()
+            self.move_abs([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
         finally:
             self.stop_recording()
