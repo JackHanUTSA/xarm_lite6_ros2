@@ -69,7 +69,11 @@ class RunAndRecord(Node):
         ex = SingleThreadedExecutor()
         ex.add_node(self)
         ex.spin_until_future_complete(fut, timeout_sec=self.timeout)
-        ex.remove_node(self)
+        try:
+            ex.remove_node(self)
+        except Exception:
+            pass
+        ex.shutdown()
         if not fut.done():
             raise RuntimeError(f'timeout calling {name}')
         return fut.result()
