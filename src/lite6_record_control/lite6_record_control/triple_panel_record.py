@@ -23,6 +23,12 @@ from typing import Optional
 import cv2
 import numpy as np
 
+try:
+    from ultralytics import YOLO
+except Exception:
+    YOLO = None
+
+
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
@@ -77,6 +83,49 @@ class RealSenseSubscriber(Node):
             if self.last_bgr is None:
                 return None
             return self.last_bgr.copy()
+
+
+
+
+def draw_yolo_seg_outline(frame_bgr: np.ndarray, model, conf: float = 0.25) -> np.ndarray:
+    """Run YOLOv8-seg on a frame and draw mask outline(s).
+
+    Note: This will segment whatever the model learned; to make it robot-only,
+    train on a robot-only ROI dataset.
+    """
+    if model is None:
+        return frame_bgr
+    try:
+        # Ultralytics expects RGB
+        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        results = model.predict(rgb, imgsz=640, conf=conf, verbose=False)
+        if not results:
+            return frame_bgr
+        r = results[0]
+        if getattr(r, 'masks', None) is None or r.masks is None:
+            return frame_bgr
+        masks = r.masks.data
+        if masks is None:
+            return frame_bgr
+        # combine all masks
+        m = masks
+        if hasattr(m, 'cpu'):
+            m = m.cpu().numpy()
+        m = (m > 0.5).astype(np.uint8)
+        comb = (np.max(m, axis=0) * 255).astype(np.uint8)
+        # resize mask to frame
+        if comb.shape[0] != frame_bgr.shape[0] or comb.shape[1] != frame_bgr.shape[1]:
+            comb = cv2.resize(comb, (frame_bgr.shape[1], frame_bgr.shape[0]), interpolation=cv2.INTER_NEAREST)
+        contours, _ = cv2.findContours(comb, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        out = frame_bgr.copy()
+        for c in contours:
+            area = cv2.contourArea(c)
+            if area < 800:
+                continue
+            cv2.drawContours(out, [c], -1, (0, 255, 0), 2)
+        return out
+    except Exception:
+        return frame_bgr
 
 
 def draw_motion_outline(frame_bgr: np.ndarray, mog2) -> np.ndarray:
@@ -143,6 +192,9 @@ def main():
     ap.add_argument("--panel_h", type=int, default=720)
     ap.add_argument("--panel_w", type=int, default=640)
     ap.add_argument("--highlight", action="store_true", help="highlight moving foreground (robot arm) with motion outline")
+    ap.add_argument("--yolo", action="store_true", help="use YOLOv8-seg outline instead of motion highlight")
+    ap.add_argument("--yolo_weights", default=str(Path.home() / "ws_xarm" / "runs" / "segment" / "vision_seg" / "runs" / "train3" / "weights" / "best.pt"), help="path to YOLOv8-seg weights")
+    ap.add_argument("--yolo_conf", type=float, default=0.25)
     args = ap.parse_args()
 
     out_path = Path(args.out)
@@ -195,6 +247,19 @@ def main():
         rclpy.shutdown()
         return 2
 
+    # Optional YOLO segmenter for robot outline
+    yolo_model = None
+    if args.yolo:
+        if YOLO is None:
+            print("ERROR: ultralytics not installed; cannot use --yolo", file=sys.stderr)
+            return 2
+        w = Path(args.yolo_weights)
+        if not w.exists():
+            print(f"ERROR: YOLO weights not found: {w}", file=sys.stderr)
+            return 2
+        yolo_model = YOLO(str(w))
+
+
     # Motion highlighters
     mog0 = cv2.createBackgroundSubtractorMOG2(history=300, varThreshold=25, detectShadows=False)
     mog1 = cv2.createBackgroundSubtractorMOG2(history=300, varThreshold=25, detectShadows=False)
@@ -237,7 +302,11 @@ def main():
         f1 = cv2.resize(f1, (args.panel_w, args.panel_h), interpolation=cv2.INTER_AREA)
         frs = cv2.resize(frs, (args.panel_w, args.panel_h), interpolation=cv2.INTER_AREA)
 
-        if args.highlight:
+        if args.yolo:
+            f0 = draw_yolo_seg_outline(f0, yolo_model, conf=args.yolo_conf)
+            f1 = draw_yolo_seg_outline(f1, yolo_model, conf=args.yolo_conf)
+            frs = draw_yolo_seg_outline(frs, yolo_model, conf=args.yolo_conf)
+        elif args.highlight:
             f0 = draw_motion_outline(f0, mog0)
             f1 = draw_motion_outline(f1, mog1)
             frs = draw_motion_outline(frs, mog2)
