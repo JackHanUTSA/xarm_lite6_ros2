@@ -24,6 +24,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
+        'triple_panel_record = lite6_record_control.triple_panel_record:main',
+        'ros_image_snapshot = lite6_record_control.ros_image_snapshot:main',
             'run_and_record = lite6_record_control.run_and_record:main',
         ],
     },
