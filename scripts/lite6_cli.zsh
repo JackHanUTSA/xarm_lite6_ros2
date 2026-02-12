@@ -1,5 +1,8 @@
 #!/usr/bin/env zsh
-set -euo pipefail
+set -eo pipefail
+
+# Avoid nounset (ROS setup scripts reference unset vars)
+set +u
 
 # Lite6 CLI helpers (zsh)
 # Usage:
@@ -54,7 +57,7 @@ confirm_motion() {
 
 ros2_topic_one() {
   # Print a few lines and exit; BrokenPipe is fine.
-  timeout 2 ros2 topic echo "$1" | head -n "${2:-60}" || true
+  timeout 2 ros2 topic echo "$1" 2>/dev/null | head -n "${2:-60}" || true
 }
 
 status() {
