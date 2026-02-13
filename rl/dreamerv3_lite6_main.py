@@ -52,6 +52,8 @@ def main(argv=None):
   # Make sure newly-added keys exist even if lite6 dict already existed.
   configs['defaults']['env'].setdefault('lite6', {})
   configs['defaults']['env']['lite6'].setdefault('video_every', 0)
+  configs['defaults']['env']['lite6'].setdefault('download_dir', '~/Downloads')
+  configs['defaults']['env']['lite6'].setdefault('download_prefix', 'robotarm training video')
 
   parsed, other = elements.Flags(configs=['defaults']).parse_known(argv)
   config = elements.Config(configs['defaults'])
