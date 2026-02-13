@@ -47,6 +47,9 @@ def main(argv=None):
       'video_seconds': 20,
       'video_every': 0,
   })
+  # Make sure newly-added keys exist even if lite6 dict already existed.
+  configs['defaults']['env'].setdefault('lite6', {})
+  configs['defaults']['env']['lite6'].setdefault('video_every', 0)
 
   parsed, other = elements.Flags(configs=['defaults']).parse_known(argv)
   config = elements.Config(configs['defaults'])
