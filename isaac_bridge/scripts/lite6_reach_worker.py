@@ -237,7 +237,7 @@ class Lite6ReachSim:
             raise RuntimeError("Could not find link_eef prim")
 
         for _ in range(10):
-            self.sim.step(render=False)
+            self.sim.step(render=self.video.enabled)
 
     def close(self):
         if self.app is not None:
@@ -264,6 +264,8 @@ class Lite6ReachSim:
         if video is None:
             video = {}
         self.video.configure(logdir, video)
+        if self.video.enabled:
+            print(f'VIDEO_ENABLED logdir={self.video.logdir} fps={self.video.fps} size={self.video.w}x{self.video.h} seconds={self.video.seconds}', flush=True)
         if self.video.enabled and self.video.annot is None:
             self.video.setup_rep(self.stage)
         self.video.reset_episode()
@@ -273,7 +275,7 @@ class Lite6ReachSim:
         self._randomize_target()
         self.art.set_joint_positions(self.q)
         for _ in range(self.cfg.settle_steps):
-            self.sim.step(render=False)
+            self.sim.step(render=self.video.enabled)
         self.video.capture()
 
         ee = self._ee_pos()
@@ -293,7 +295,7 @@ class Lite6ReachSim:
         self.q = self.q + dq
         self.art.set_joint_positions(self.q)
         for _ in range(self.cfg.settle_steps):
-            self.sim.step(render=False)
+            self.sim.step(render=self.video.enabled)
         self.t += 1
         self.video.capture()
 
@@ -304,6 +306,9 @@ class Lite6ReachSim:
         mp4 = None
         if done:
             mp4 = self.video.save_episode()
+
+        if mp4:
+            print(f'VIDEO_SAVED {mp4}', flush=True)
 
         out = {
             'q': self.q.tolist(),
