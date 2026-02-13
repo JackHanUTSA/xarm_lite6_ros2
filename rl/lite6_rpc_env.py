@@ -91,7 +91,7 @@ class Lite6RPCEnv(embodied.Env):
   def step(self, action):
     self._connect()
     if action['reset'] or self._done:
-      _send(self._sock, {'cmd': 'reset', 'task': self._task, 'logdir': self._logdir, 'video': self._video, 'video_every': self._video_every})
+      _send(self._sock, {'cmd': 'reset', 'task': self._task, 'logdir': self._logdir, 'video': self._video, 'video_every': self._video_every, 'download': {'dir': self._download_dir, 'prefix': self._download_prefix}})
       msg = _recv(self._sock)
       self._done = False
       return self._format(msg, is_first=True)

@@ -62,13 +62,17 @@ class VideoRecorder:
         self.seconds = 20
         self.logdir = ''
         self.episode_idx = 0
+        self.video_every = 0
+        self.download_dir = ''
+        self.download_prefix = 'robotarm training video'
+        self.global_step = 0
         self.frames = []
         self.rep = None
         self.annot = None
         self.rp = None
         self.cam = None
 
-    def configure(self, logdir: str, video: dict):
+    def configure(self, logdir: str, video: dict, video_every: int = 0, download=None):
         self.logdir = str(logdir or '')
         self.enabled = bool(self.logdir)
         if not self.enabled:
@@ -77,6 +81,10 @@ class VideoRecorder:
         self.w = int(video.get('w', 640))
         self.h = int(video.get('h', 480))
         self.seconds = int(video.get('seconds', 20))
+        self.video_every = int(video_every or 0)
+        download = download or {}
+        self.download_dir = str(download.get('dir','') or '')
+        self.download_prefix = str(download.get('prefix','robotarm training video') or 'robotarm training video')
 
     def setup_rep(self, stage):
         if not self.enabled:
@@ -259,16 +267,17 @@ class Lite6ReachSim:
         pos, _ = self._get_world_pose(self.ee_path)
         return np.array(pos, np.float32)
 
-    def reset(self, logdir='', video=None):
+    def reset(self, logdir='', video=None, video_every=0, download=None):
         # configure video capture on first reset
         if video is None:
             video = {}
-        self.video.configure(logdir, video)
+        self.video.configure(logdir, video, video_every, download)
         if self.video.enabled:
             print(f'VIDEO_ENABLED logdir={self.video.logdir} fps={self.video.fps} size={self.video.w}x{self.video.h} seconds={self.video.seconds}', flush=True)
         if self.video.enabled and self.video.annot is None:
             self.video.setup_rep(self.stage)
         self.video.reset_episode()
+        self.video.global_step = 0
 
         self.t = 0
         self.q[:] = 0.0
@@ -297,7 +306,23 @@ class Lite6ReachSim:
         for _ in range(self.cfg.settle_steps):
             self.sim.step(render=self.video.enabled)
         self.t += 1
+        self.video.global_step += 1
         self.video.capture()
+
+        # Periodic clip saving (e.g., every 100 steps)
+        if self.video.enabled and self.video.video_every > 0 and (self.video.global_step % self.video.video_every) == 0:
+            mp4c = self.video.save_episode('clip')
+            if mp4c and self.video.download_dir:
+                try:
+                    import shutil, os
+                    d = os.path.expanduser(self.video.download_dir)
+                    os.makedirs(d, exist_ok=True)
+                    safe = self.video.download_prefix.replace('/', '_')
+                    dst = os.path.join(d, f"{safe} - step_{self.video.global_step:09d}.mp4")
+                    shutil.copy2(mp4c, dst)
+                except Exception:
+                    pass
+
 
         ee = self._ee_pos()
         dist = float(np.linalg.norm(ee - self.target))
@@ -341,7 +366,7 @@ def serve(host='127.0.0.1', port=5555):
             msg = recv_msg(conn)
             cmd = msg.get('cmd')
             if cmd == 'reset':
-                send_msg(conn, sim.reset(msg.get('logdir',''), msg.get('video', {})))
+                send_msg(conn, sim.reset(msg.get('logdir',''), msg.get('video', {}), msg.get('video_every', 0), msg.get('download', None)))
             elif cmd == 'step':
                 send_msg(conn, sim.step(msg['action']))
             elif cmd == 'save_video':
