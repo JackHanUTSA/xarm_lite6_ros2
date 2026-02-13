@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """Headless Isaac worker: exposes reset/step over TCP for Lite6 reach.
 
-Launch with Isaac Sim's python.sh:
+Uses the same URDF import path as lite6_reach_rollout.py (omni.kit.commands).
+Launch with:
   ~/isaacsim/isaac-sim-4.2.0/python.sh ~/ws_xarm/isaac_bridge/scripts/lite6_reach_worker.py
 
 Protocol: length-prefixed JSON messages.
-Client sends:
+Client -> Worker:
   {"cmd":"reset"}
-  {"cmd":"step", "action":[6 floats]}
-Worker replies with:
-  {"q":[6], "ee_pos":[3], "target_pos":[3], "reward":float, "is_last":bool, "is_terminal":bool}
+  {"cmd":"step", "action":[6 floats in [-1,1]]}
+Worker -> Client:
+  {"q":[6], "ee_pos":[3], "target_pos":[3], "reward":float,
+   "is_last":bool, "is_terminal":bool}
 """
 
 import socket
@@ -19,7 +21,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from omni.isaac.kit import SimulationApp
+from isaacsim import SimulationApp
 
 
 def recvall(sock, n):
@@ -58,9 +60,11 @@ class ReachConfig:
 class Lite6ReachSim:
     def __init__(self, cfg: ReachConfig):
         self.cfg = cfg
+        self.app = None
         self.sim = None
-        self.world = None
         self.art = None
+        self.stage = None
+        self.stage_path = None
         self.ee_path = None
         self.q = np.zeros((6,), np.float32)
         self.target = np.zeros((3,), np.float32)
@@ -68,66 +72,87 @@ class Lite6ReachSim:
         self._rng = np.random.RandomState(0)
 
     def start(self):
-        self.sim = SimulationApp({"headless": True})
+        ws = "/home/r91/ws_xarm"
+        urdf_path = f"{ws}/isaac_bridge/lite6_isaac.urdf"
 
-        import omni.usd
-        from pxr import UsdPhysics
-        from omni.isaac.core import World
+        self.app = SimulationApp({"renderer": "RayTracedLighting", "headless": True})
+
+        import omni
+        import omni.kit.commands
+        from omni.isaac.core import SimulationContext
         from omni.isaac.core.articulations import Articulation
-        from omni.importer.urdf import _urdf
-        import omni.isaac.core.utils.stage as stage_utils
         from omni.isaac.core.utils.xforms import get_world_pose
+        from pxr import Gf, PhysxSchema, Sdf, UsdLux, UsdPhysics
 
         self._get_world_pose = get_world_pose
 
-        stage_utils.create_new_stage()
-        stage = omni.usd.get_context().get_stage()
-
-        scene = UsdPhysics.Scene.Define(stage, "/physicsScene")
-        scene.CreateGravityDirectionAttr().Set((0.0, 0.0, -1.0))
-        scene.CreateGravityMagnitudeAttr().Set(9.81)
-
-        urdf_path = "/home/r91/ws_xarm/lite6_isaac.urdf"
-        import_config = _urdf.ImportConfig()
+        # Import URDF via commands (stable API)
+        status, import_config = omni.kit.commands.execute("URDFCreateImportConfig")
         import_config.merge_fixed_joints = False
+        import_config.convex_decomp = False
+        import_config.import_inertia_tensor = True
         import_config.fix_base = True
-        import_config.make_default_prim = True
-        import_config.self_collision = False
+        import_config.distance_scale = 1
 
-        importer = _urdf.acquire_urdf_interface()
-        ok = importer.import_robot(urdf_path, import_config)
-        if not ok:
+        status, stage_path = omni.kit.commands.execute(
+            "URDFParseAndImportFile",
+            urdf_path=str(urdf_path),
+            import_config=import_config,
+            get_articulation_root=True,
+        )
+        if not status:
             raise RuntimeError("URDF import failed")
 
-        self.world = World(stage_units_in_meters=1.0)
-        self.world.reset()
+        self.stage = omni.usd.get_context().get_stage()
+        self.stage_path = stage_path
 
-        default_prim = stage.GetDefaultPrim()
-        robot_path = str(default_prim.GetPath())
+        # Physics scene (must exist before Articulation.initialize)
+        scene = UsdPhysics.Scene.Define(self.stage, Sdf.Path("/physicsScene"))
+        scene.CreateGravityDirectionAttr().Set(Gf.Vec3f(0.0, 0.0, -1.0))
+        scene.CreateGravityMagnitudeAttr().Set(9.81)
+        PhysxSchema.PhysxSceneAPI.Apply(self.stage.GetPrimAtPath("/physicsScene"))
 
-        art_path = robot_path.rstrip('/') + "/root_joint"
-        self.art = Articulation(prim_path=art_path)
+        # Light
+        light = UsdLux.DistantLight.Define(self.stage, Sdf.Path("/DistantLight"))
+        light.CreateIntensityAttr(500)
+
+        # Apply updates
+        self.app.update()
+
+        self.sim = SimulationContext(stage_units_in_meters=1.0)
+        self.sim.initialize_physics()
+
+        # Articulation init
+        self.art = Articulation(prim_path=self.stage_path)
         self.art.initialize()
+        if not self.art.handles_initialized:
+            raise RuntimeError(f"{self.stage_path} is not an articulation")
 
-        self.ee_path = robot_path.rstrip('/') + "/link_eef"
+        # EE path: find by suffix /link_eef
+        self.ee_path = None
+        for prim in self.stage.Traverse():
+            p = prim.GetPath().pathString
+            if p.endswith("/link_eef"):
+                self.ee_path = p
+                break
+        if not self.ee_path:
+            raise RuntimeError("Could not find link_eef prim")
 
         # settle
         for _ in range(10):
-            self.world.step(render=False)
+            self.sim.step(render=False)
 
-        self._randomize_target()
         self.reset()
 
     def close(self):
-        if self.sim is not None:
+        if self.app is not None:
             try:
-                self.sim.close()
+                self.app.close()
             except Exception:
                 pass
-            self.sim = None
+            self.app = None
 
     def _randomize_target(self):
-        # change rng seed over time
         self._rng.seed(int(time.time() * 1e6) % (2**32 - 1))
         self.target = np.array([
             self._rng.uniform(self.cfg.x_min, self.cfg.x_max),
@@ -145,7 +170,7 @@ class Lite6ReachSim:
         self._randomize_target()
         self.art.set_joint_positions(self.q)
         for _ in range(self.cfg.settle_steps):
-            self.world.step(render=False)
+            self.sim.step(render=False)
         ee = self._ee_pos()
         dist = float(np.linalg.norm(ee - self.target))
         return {
@@ -163,7 +188,7 @@ class Lite6ReachSim:
         self.q = self.q + dq
         self.art.set_joint_positions(self.q)
         for _ in range(self.cfg.settle_steps):
-            self.world.step(render=False)
+            self.sim.step(render=False)
         self.t += 1
         ee = self._ee_pos()
         dist = float(np.linalg.norm(ee - self.target))
