@@ -1,22 +1,18 @@
 #!/usr/bin/env python3
 """Headless Isaac worker: exposes reset/step over TCP for Lite6 reach.
 
-Uses the same URDF import path as lite6_reach_rollout.py (omni.kit.commands).
-Launch with:
-  ~/isaacsim/isaac-sim-4.2.0/python.sh ~/ws_xarm/isaac_bridge/scripts/lite6_reach_worker.py
+Adds per-episode video saving: on episode end, saves an MP4 of exactly N seconds
+(default 20s) by resampling frames to target_fps*seconds.
 
-Protocol: length-prefixed JSON messages.
-Client -> Worker:
-  {"cmd":"reset"}
-  {"cmd":"step", "action":[6 floats in [-1,1]]}
-Worker -> Client:
-  {"q":[6], "ee_pos":[3], "target_pos":[3], "reward":float,
-   "is_last":bool, "is_terminal":bool}
+Launch:
+  ~/isaacsim/isaac-sim-4.2.0/python.sh ~/ws_xarm/isaac_bridge/scripts/lite6_reach_worker.py
 """
 
 import socket
 import json
 import time
+import os
+import subprocess
 from dataclasses import dataclass
 
 import numpy as np
@@ -57,6 +53,112 @@ class ReachConfig:
     z_max: float = 0.40
 
 
+class VideoRecorder:
+    def __init__(self):
+        self.enabled = False
+        self.fps = 30
+        self.w = 640
+        self.h = 480
+        self.seconds = 20
+        self.logdir = ''
+        self.episode_idx = 0
+        self.frames = []
+        self.rep = None
+        self.annot = None
+        self.rp = None
+        self.cam = None
+
+    def configure(self, logdir: str, video: dict):
+        self.logdir = str(logdir or '')
+        self.enabled = bool(self.logdir)
+        if not self.enabled:
+            return
+        self.fps = int(video.get('fps', 30))
+        self.w = int(video.get('w', 640))
+        self.h = int(video.get('h', 480))
+        self.seconds = int(video.get('seconds', 20))
+
+    def setup_rep(self, stage):
+        if not self.enabled:
+            return
+        import omni.replicator.core as rep
+        from pxr import UsdGeom, Sdf
+
+        self.rep = rep
+        # Create a camera
+        cam_path = Sdf.Path('/World/Lite6Cam')
+        if not stage.GetPrimAtPath(cam_path):
+            rep.create.camera(position=(0.9, 0.0, 0.7), look_at=(0.0, 0.0, 0.25), name='Lite6Cam')
+        self.cam = '/World/Lite6Cam'
+
+        self.rp = rep.create.render_product(self.cam, (self.w, self.h))
+        self.annot = rep.AnnotatorRegistry.get_annotator('rgb')
+        self.annot.attach([self.rp])
+        # no writers; we pull frames directly
+
+    def reset_episode(self):
+        if not self.enabled:
+            return
+        self.frames = []
+
+    def capture(self):
+        if not self.enabled or self.annot is None:
+            return
+        # Replicator updates
+        self.rep.orchestrator.step()
+        data = self.annot.get_data()
+        if data is None:
+            return
+        # rgba -> rgb
+        rgb = np.asarray(data)[..., :3].copy()
+        self.frames.append(rgb)
+
+    def save_episode(self):
+        if not self.enabled:
+            return None
+        if not self.frames:
+            return None
+
+        target = int(self.fps * self.seconds)
+        n = len(self.frames)
+        # resample indices to exactly target frames
+        idx = np.linspace(0, max(n - 1, 0), num=target)
+        idx = np.clip(np.round(idx).astype(int), 0, max(n - 1, 0))
+        frames = [self.frames[i] for i in idx]
+
+        out_dir = os.path.join(self.logdir, 'episodes')
+        os.makedirs(out_dir, exist_ok=True)
+        self.episode_idx += 1
+        mp4_path = os.path.join(out_dir, f'ep_{self.episode_idx:06d}.mp4')
+
+        tmp_dir = os.path.join(out_dir, f'.tmp_ep_{self.episode_idx:06d}')
+        os.makedirs(tmp_dir, exist_ok=True)
+
+        import imageio.v2 as imageio
+        for k, fr in enumerate(frames, 1):
+            imageio.imwrite(os.path.join(tmp_dir, f'frame_{k:06d}.png'), fr)
+
+        cmd = [
+            'ffmpeg', '-y',
+            '-framerate', str(self.fps),
+            '-i', os.path.join(tmp_dir, 'frame_%06d.png'),
+            '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+            mp4_path,
+        ]
+        subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # cleanup pngs
+        try:
+            for name in os.listdir(tmp_dir):
+                if name.endswith('.png'):
+                    os.remove(os.path.join(tmp_dir, name))
+            os.rmdir(tmp_dir)
+        except Exception:
+            pass
+
+        return mp4_path
+
+
 class Lite6ReachSim:
     def __init__(self, cfg: ReachConfig):
         self.cfg = cfg
@@ -70,6 +172,8 @@ class Lite6ReachSim:
         self.target = np.zeros((3,), np.float32)
         self.t = 0
         self._rng = np.random.RandomState(0)
+        self._get_world_pose = None
+        self.video = VideoRecorder()
 
     def start(self):
         ws = "/home/r91/ws_xarm"
@@ -86,7 +190,6 @@ class Lite6ReachSim:
 
         self._get_world_pose = get_world_pose
 
-        # Import URDF via commands (stable API)
         status, import_config = omni.kit.commands.execute("URDFCreateImportConfig")
         import_config.merge_fixed_joints = False
         import_config.convex_decomp = False
@@ -106,29 +209,24 @@ class Lite6ReachSim:
         self.stage = omni.usd.get_context().get_stage()
         self.stage_path = stage_path
 
-        # Physics scene (must exist before Articulation.initialize)
         scene = UsdPhysics.Scene.Define(self.stage, Sdf.Path("/physicsScene"))
         scene.CreateGravityDirectionAttr().Set(Gf.Vec3f(0.0, 0.0, -1.0))
         scene.CreateGravityMagnitudeAttr().Set(9.81)
         PhysxSchema.PhysxSceneAPI.Apply(self.stage.GetPrimAtPath("/physicsScene"))
 
-        # Light
         light = UsdLux.DistantLight.Define(self.stage, Sdf.Path("/DistantLight"))
         light.CreateIntensityAttr(500)
 
-        # Apply updates
         self.app.update()
 
         self.sim = SimulationContext(stage_units_in_meters=1.0)
         self.sim.initialize_physics()
 
-        # Articulation init
         self.art = Articulation(prim_path=self.stage_path)
         self.art.initialize()
         if not self.art.handles_initialized:
             raise RuntimeError(f"{self.stage_path} is not an articulation")
 
-        # EE path: find by suffix /link_eef
         self.ee_path = None
         for prim in self.stage.Traverse():
             p = prim.GetPath().pathString
@@ -138,11 +236,8 @@ class Lite6ReachSim:
         if not self.ee_path:
             raise RuntimeError("Could not find link_eef prim")
 
-        # settle
         for _ in range(10):
             self.sim.step(render=False)
-
-        self.reset()
 
     def close(self):
         if self.app is not None:
@@ -164,13 +259,23 @@ class Lite6ReachSim:
         pos, _ = self._get_world_pose(self.ee_path)
         return np.array(pos, np.float32)
 
-    def reset(self):
+    def reset(self, logdir='', video=None):
+        # configure video capture on first reset
+        if video is None:
+            video = {}
+        self.video.configure(logdir, video)
+        if self.video.enabled and self.video.annot is None:
+            self.video.setup_rep(self.stage)
+        self.video.reset_episode()
+
         self.t = 0
         self.q[:] = 0.0
         self._randomize_target()
         self.art.set_joint_positions(self.q)
         for _ in range(self.cfg.settle_steps):
             self.sim.step(render=False)
+        self.video.capture()
+
         ee = self._ee_pos()
         dist = float(np.linalg.norm(ee - self.target))
         return {
@@ -190,10 +295,17 @@ class Lite6ReachSim:
         for _ in range(self.cfg.settle_steps):
             self.sim.step(render=False)
         self.t += 1
+        self.video.capture()
+
         ee = self._ee_pos()
         dist = float(np.linalg.norm(ee - self.target))
         done = self.t >= self.cfg.episode_len
-        return {
+
+        mp4 = None
+        if done:
+            mp4 = self.video.save_episode()
+
+        out = {
             'q': self.q.tolist(),
             'ee_pos': ee.tolist(),
             'target_pos': self.target.tolist(),
@@ -201,6 +313,9 @@ class Lite6ReachSim:
             'is_last': bool(done),
             'is_terminal': False,
         }
+        if mp4:
+            out['video_path'] = mp4
+        return out
 
 
 def serve(host='127.0.0.1', port=5555):
@@ -221,7 +336,7 @@ def serve(host='127.0.0.1', port=5555):
             msg = recv_msg(conn)
             cmd = msg.get('cmd')
             if cmd == 'reset':
-                send_msg(conn, sim.reset())
+                send_msg(conn, sim.reset(msg.get('logdir',''), msg.get('video', {})))
             elif cmd == 'step':
                 send_msg(conn, sim.step(msg['action']))
             elif cmd == 'close':

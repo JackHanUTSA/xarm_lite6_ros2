@@ -40,6 +40,11 @@ def main(argv=None):
       'host': '127.0.0.1',
       'port': 5555,
       'timeout': 30,
+      'logdir': '',
+      'video_fps': 30,
+      'video_w': 640,
+      'video_h': 480,
+      'video_seconds': 20,
   })
 
   parsed, other = elements.Flags(configs=['defaults']).parse_known(argv)
@@ -59,6 +64,15 @@ def main(argv=None):
 
   config = config.update(logdir=(
       config.logdir.format(timestamp=elements.timestamp())))
+
+  # If env.lite6.logdir not set, default to run logdir so the worker can save episode videos there.
+  try:
+    l6 = dict(config.env.get('lite6', {}))
+    if not str(l6.get('logdir','')):
+      l6['logdir'] = config.logdir
+      config = config.update(env={**dict(config.env), 'lite6': l6})
+  except Exception:
+    pass
 
   if 'JOB_COMPLETION_INDEX' in os.environ:
     config = config.update(replica=int(os.environ['JOB_COMPLETION_INDEX']))
