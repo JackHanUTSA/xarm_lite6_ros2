@@ -222,7 +222,7 @@ def make_env(config, index, **overrides):
     kwargs = {**kwargs, 'logdir': config.logdir}
   # lite6: per-env port mapping and only env0 exports videos to Downloads
   if suite == 'lite6':
-    pb = kwargs.get('port_base', None)
+    pb = kwargs.pop('port_base', None)
     if pb is not None:
       try:
         kwargs = {**kwargs, 'port': int(pb) + int(index)}
