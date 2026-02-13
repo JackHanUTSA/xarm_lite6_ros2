@@ -46,6 +46,8 @@ def main(argv=None):
       'video_h': 480,
       'video_seconds': 20,
       'video_every': 0,
+      'download_dir': '~/Downloads',
+      'download_prefix': 'robotarm training video',
   })
   # Make sure newly-added keys exist even if lite6 dict already existed.
   configs['defaults']['env'].setdefault('lite6', {})
