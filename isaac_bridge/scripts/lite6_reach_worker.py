@@ -390,4 +390,9 @@ def serve(host='127.0.0.1', port=5555):
 
 
 if __name__ == '__main__':
-    serve()
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--host', default='127.0.0.1')
+    ap.add_argument('--port', type=int, default=5555)
+    args = ap.parse_args()
+    serve(args.host, args.port)

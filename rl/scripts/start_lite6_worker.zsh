@@ -7,9 +7,9 @@ ISAAC_PY="$HOME/isaacsim/isaac-sim-4.2.0/python.sh"
 SCRIPT="$HOME/ws_xarm/isaac_bridge/scripts/lite6_reach_worker.py"
 
 echo "Starting Lite6 Isaac worker on ${HOST}:${PORT}"
-nohup "$ISAAC_PY" "$SCRIPT" >"$LOG" 2>&1 &
+nohup "$ISAAC_PY" "$SCRIPT" --host "$HOST" --port "$PORT" >"$LOG" 2>&1 &
 PID=$!
-echo $PID > /tmp/lite6_worker.pid
+echo $PID > "/tmp/lite6_worker_${PORT}.pid"
 sleep 1
 
 echo "PID=$PID"
