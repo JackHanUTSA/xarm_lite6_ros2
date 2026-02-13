@@ -39,6 +39,7 @@ def main(argv=None):
   configs['defaults']['env'].setdefault('lite6', {
       'host': '127.0.0.1',
       'port': 5555,
+      'port_base': 5555,
       'timeout': 30,
       'logdir': '',
       'video_fps': 30,
@@ -52,6 +53,7 @@ def main(argv=None):
   # Make sure newly-added keys exist even if lite6 dict already existed.
   configs['defaults']['env'].setdefault('lite6', {})
   configs['defaults']['env']['lite6'].setdefault('video_every', 0)
+  configs['defaults']['env']['lite6'].setdefault('port_base', 5555)
   configs['defaults']['env']['lite6'].setdefault('download_dir', '~/Downloads')
   configs['defaults']['env']['lite6'].setdefault('download_prefix', 'robotarm training video')
 
@@ -218,6 +220,21 @@ def make_env(config, index, **overrides):
   # Ensure worker knows where to save per-episode videos
   if suite == 'lite6' and not str(kwargs.get('logdir','')):
     kwargs = {**kwargs, 'logdir': config.logdir}
+  # lite6: per-env port mapping and only env0 exports videos to Downloads
+  if suite == 'lite6':
+    pb = kwargs.get('port_base', None)
+    if pb is not None:
+      try:
+        kwargs = {**kwargs, 'port': int(pb) + int(index)}
+      except Exception:
+        pass
+    if int(index) != 0:
+      # Disable video/export on nonzero envs to avoid spamming.
+      try:
+        kwargs = {**kwargs, 'video_every': 0, 'download_dir': ''}
+      except Exception:
+        pass
+
   kwargs.update(overrides)
   if kwargs.pop('use_seed', False):
     kwargs['seed'] = hash((config.seed, index)) % (2 ** 32 - 1)
