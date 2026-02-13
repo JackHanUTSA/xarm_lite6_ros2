@@ -47,6 +47,16 @@ def main(argv=None):
   for name in parsed.configs:
     config = config.update(configs[name])
   config = elements.Flags(config).parse(other)
+
+  # Normalize logger.outputs when passed as a single string like "[jsonl,scope]".
+  outs = list(config.logger.outputs)
+  if len(outs) == 1 and isinstance(outs[0], str) and outs[0].lstrip().startswith("["):
+    s = outs[0].strip()
+    if s.startswith("[") and s.endswith("]"):
+      inner = s[1:-1].strip()
+      outs = [x.strip() for x in inner.split(",") if x.strip()]
+      config = config.update(logger={**dict(config.logger), "outputs": outs})
+
   config = config.update(logdir=(
       config.logdir.format(timestamp=elements.timestamp())))
 
