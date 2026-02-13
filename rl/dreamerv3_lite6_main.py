@@ -166,11 +166,17 @@ def make_replay(config, folder, mode='train'):
   return embodied.replay.Replay(**kwargs)
 
 
-def make_stream(config):
-  # Use default stream impl from embodied.
-  return embodied.run.make_stream(config)
-
-
+def make_stream(config, replay, mode):
+  fn = bind(replay.sample, config.batch_size, mode)
+  stream = embodied.streams.Stateless(fn)
+  stream = embodied.streams.Consec(
+      stream,
+      length=config.batch_length if mode == 'train' else config.report_length,
+      consec=config.consec_train if mode == 'train' else config.consec_report,
+      prefix=config.replay_context,
+      strict=(mode == 'train'),
+      contiguous=True)
+  return stream
 def make_env(config, index, **overrides):
   suite, task = config.task.split('_', 1)
 
