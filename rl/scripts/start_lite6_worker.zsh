@@ -10,7 +10,15 @@ echo "Starting Lite6 Isaac worker on ${HOST}:${PORT}"
 nohup "$ISAAC_PY" "$SCRIPT" --host "$HOST" --port "$PORT" >"$LOG" 2>&1 &
 PID=$!
 echo $PID > "/tmp/lite6_worker_${PORT}.pid"
-sleep 1
+echo 'WAITING_FOR_LISTEN...'
+# Wait up to 120s for the TCP port to start listening.
+for i in {1..240}; do
+  if ss -ltn 2>/dev/null | grep -q "${HOST}:${PORT}"; then
+    break
+  fi
+  sleep 0.5
+done
+
 
 echo "PID=$PID"
 echo "log=$LOG"
