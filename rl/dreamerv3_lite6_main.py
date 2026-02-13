@@ -231,7 +231,7 @@ def make_env(config, index, **overrides):
     if int(index) != 0:
       # Disable video/export on nonzero envs to avoid spamming.
       try:
-        kwargs = {**kwargs, 'video_every': 0, 'download_dir': ''}
+        kwargs = {**kwargs, 'video_every': 0, 'download_dir': '', 'logdir': ''}
       except Exception:
         pass
 
