@@ -28,8 +28,9 @@ def main(argv=None):
   [elements.print(line) for line in Agent.banner]
 
   # Load upstream DreamerV3 configs
-  import dreamerv3
-  folder = pathlib.Path(dreamerv3.__file__).parent
+  import importlib
+  mod = importlib.import_module("dreamerv3.main")
+  folder = pathlib.Path(mod.__file__).parent
   configs = elements.Path(folder / 'configs.yaml').read()
   configs = yaml.YAML(typ='safe').load(configs)
 
