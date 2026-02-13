@@ -45,6 +45,7 @@ def main(argv=None):
       'video_w': 640,
       'video_h': 480,
       'video_seconds': 20,
+      'video_every': 0,
   })
 
   parsed, other = elements.Flags(configs=['defaults']).parse_known(argv)

@@ -29,13 +29,15 @@ def _recv(sock):
 class Lite6RPCEnv(embodied.Env):
   """Embodied env proxying to Isaac worker over TCP."""
 
-  def __init__(self, task, host='127.0.0.1', port=5555, timeout=30.0, logdir='', video_fps=30, video_w=640, video_h=480, video_seconds=20):
+  def __init__(self, task, host='127.0.0.1', port=5555, timeout=30.0, logdir='', video_fps=30, video_w=640, video_h=480, video_seconds=20, video_every=0):
     self._task = task
     self._host = host
     self._port = int(port)
     self._timeout = float(timeout)
     self._logdir = str(logdir)
     self._video = dict(fps=int(video_fps), w=int(video_w), h=int(video_h), seconds=int(video_seconds))
+    self._video_every = int(video_every)
+    self._step_count = 0
     self._sock = None
     self._done = True
 
@@ -70,7 +72,7 @@ class Lite6RPCEnv(embodied.Env):
   def step(self, action):
     self._connect()
     if action['reset'] or self._done:
-      _send(self._sock, {'cmd': 'reset', 'task': self._task, 'logdir': self._logdir, 'video': self._video})
+      _send(self._sock, {'cmd': 'reset', 'task': self._task, 'logdir': self._logdir, 'video': self._video, 'video_every': self._video_every})
       msg = _recv(self._sock)
       self._done = False
       return self._format(msg, is_first=True)

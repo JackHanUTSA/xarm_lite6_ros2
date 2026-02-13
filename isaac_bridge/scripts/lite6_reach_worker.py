@@ -113,7 +113,7 @@ class VideoRecorder:
         rgb = np.asarray(data)[..., :3].copy()
         self.frames.append(rgb)
 
-    def save_episode(self):
+    def save_episode(self, name_prefix='ep'):
         if not self.enabled:
             return None
         if not self.frames:
@@ -129,9 +129,9 @@ class VideoRecorder:
         out_dir = os.path.join(self.logdir, 'episodes')
         os.makedirs(out_dir, exist_ok=True)
         self.episode_idx += 1
-        mp4_path = os.path.join(out_dir, f'ep_{self.episode_idx:06d}.mp4')
+        mp4_path = os.path.join(out_dir, f'{name_prefix}_{self.episode_idx:06d}.mp4')
 
-        tmp_dir = os.path.join(out_dir, f'.tmp_ep_{self.episode_idx:06d}')
+        tmp_dir = os.path.join(out_dir, f'.tmp_{name_prefix}_{self.episode_idx:06d}')
         os.makedirs(tmp_dir, exist_ok=True)
 
         import imageio.v2 as imageio
@@ -305,7 +305,7 @@ class Lite6ReachSim:
 
         mp4 = None
         if done:
-            mp4 = self.video.save_episode()
+            mp4 = self.video.save_episode('ep')
 
         if mp4:
             print(f'VIDEO_SAVED {mp4}', flush=True)
@@ -344,6 +344,10 @@ def serve(host='127.0.0.1', port=5555):
                 send_msg(conn, sim.reset(msg.get('logdir',''), msg.get('video', {})))
             elif cmd == 'step':
                 send_msg(conn, sim.step(msg['action']))
+            elif cmd == 'save_video':
+                # Save a clip from currently buffered frames (resampled to N seconds).
+                mp4 = sim.video.save_episode()
+                send_msg(conn, {'ok': True, 'video_path': mp4})
             elif cmd == 'close':
                 break
             else:
