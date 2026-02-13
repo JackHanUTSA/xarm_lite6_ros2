@@ -13,6 +13,10 @@ from pathlib import Path
 
 import numpy as np
 
+import builtins
+print = lambda *a, **k: builtins.print(*a, **k, flush=True)
+
+
 from isaacsim import SimulationApp
 
 CONFIG = {"renderer": "RayTracedLighting", "headless": True}
