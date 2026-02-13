@@ -65,7 +65,7 @@ class VideoRecorder:
         self.video_every = 0
         self.download_dir = ''
         self.download_prefix = 'robotarm training video'
-        self.global_step = 0
+        self.global_step = 0  # run-global step counter (not reset per episode)
         self.frames = []
         self.rep = None
         self.annot = None
@@ -277,7 +277,6 @@ class Lite6ReachSim:
         if self.video.enabled and self.video.annot is None:
             self.video.setup_rep(self.stage)
         self.video.reset_episode()
-        self.video.global_step = 0
 
         self.t = 0
         self.q[:] = 0.0
