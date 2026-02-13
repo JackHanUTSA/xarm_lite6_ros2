@@ -207,6 +207,9 @@ def make_env(config, index, **overrides):
     ctor = getattr(module, cls)
 
   kwargs = config.env.get(suite, {})
+  # Ensure worker knows where to save per-episode videos
+  if suite == 'lite6' and not str(kwargs.get('logdir','')):
+    kwargs = {**kwargs, 'logdir': config.logdir}
   kwargs.update(overrides)
   if kwargs.pop('use_seed', False):
     kwargs['seed'] = hash((config.seed, index)) % (2 ** 32 - 1)
