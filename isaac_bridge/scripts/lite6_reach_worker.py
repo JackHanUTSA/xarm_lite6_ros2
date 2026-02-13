@@ -346,7 +346,7 @@ def serve(host='127.0.0.1', port=5555):
                 send_msg(conn, sim.step(msg['action']))
             elif cmd == 'save_video':
                 # Save a clip from currently buffered frames (resampled to N seconds).
-                mp4 = sim.video.save_episode()
+                mp4 = sim.video.save_episode('clip')
                 send_msg(conn, {'ok': True, 'video_path': mp4})
             elif cmd == 'close':
                 break
