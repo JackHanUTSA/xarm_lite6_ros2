@@ -3,6 +3,7 @@ import json
 
 # Run-global step counter (shared across all Lite6RPCEnv instances in this process).
 _RUN_GLOBAL_STEP = 0
+_RUN_GLOBAL_STEP_LAST = 0
 
 import elements
 import embodied
@@ -49,8 +50,9 @@ def _copy_video_to_downloads(src_path: str, step_count: int, download_dir: str, 
 class Lite6RPCEnv(embodied.Env):
   """Embodied env proxying to Isaac worker over TCP."""
 
-  def __init__(self, task, host='127.0.0.1', port=5555, timeout=30.0, logdir='', video_fps=30, video_w=640, video_h=480, video_seconds=20, video_every=0, download_dir='~/Downloads', download_prefix='robotarm training video'):
+  def __init__(self, task, index=0, host='127.0.0.1', port=5555, timeout=30.0, logdir='', video_fps=30, video_w=640, video_h=480, video_seconds=20, video_every=0, download_dir='~/Downloads', download_prefix='robotarm training video'):
     self._task = task
+    self._index = int(index)
     self._host = host
     self._port = int(port)
     self._timeout = float(timeout)
@@ -100,7 +102,12 @@ class Lite6RPCEnv(embodied.Env):
       return self._format(msg, is_first=True)
 
     act = np.asarray(action['action'], np.float32).reshape((6,))
-    _send(self._sock, {'cmd': 'step', 'action': act.tolist()})
+    global _RUN_GLOBAL_STEP, _RUN_GLOBAL_STEP_LAST
+    if self._index == 0:
+      _RUN_GLOBAL_STEP += 1
+      _RUN_GLOBAL_STEP_LAST = _RUN_GLOBAL_STEP
+    gstep = _RUN_GLOBAL_STEP_LAST
+    _send(self._sock, {'cmd': 'step', 'action': act.tolist(), 'global_step': gstep})
     msg = _recv(self._sock)
     self._done = bool(msg.get('is_last', False))
     return self._format(msg)

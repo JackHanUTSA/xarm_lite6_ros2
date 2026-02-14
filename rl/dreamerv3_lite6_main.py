@@ -241,6 +241,8 @@ def make_env(config, index, **overrides):
   if kwargs.pop('use_logdir', False):
     kwargs['logdir'] = elements.Path(config.logdir) / f'env{index}'
 
+  if suite == 'lite6':
+    kwargs = {**kwargs, 'index': int(index)}
   env = ctor(task, **kwargs)
 
   # Wrap like upstream
