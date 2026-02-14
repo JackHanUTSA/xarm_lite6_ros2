@@ -348,40 +348,52 @@ class Lite6ReachSim:
 
 
 def serve(host='127.0.0.1', port=5555):
+    """Serve RPC requests.
+
+    Important: keep the Isaac Sim process alive across client reconnects.
+    Dreamer can crash/restart and we still want the worker to stay listening.
+    """
     sim = Lite6ReachSim(ReachConfig())
     sim.start()
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((host, int(port)))
-    srv.listen(1)
+    srv.listen(16)
     print(f"LITE6_WORKER_LISTEN {host}:{port}", flush=True)
 
-    conn = None
     try:
-        conn, addr = srv.accept()
-        print(f"LITE6_WORKER_CLIENT {addr}", flush=True)
         while True:
-            msg = recv_msg(conn)
-            cmd = msg.get('cmd')
-            if cmd == 'reset':
-                send_msg(conn, sim.reset(msg.get('logdir',''), msg.get('video', {}), msg.get('video_every', 0), msg.get('download', None)))
-            elif cmd == 'step':
-                send_msg(conn, sim.step(msg['action']))
-            elif cmd == 'save_video':
-                # Save a clip from currently buffered frames (resampled to N seconds).
-                mp4 = sim.video.save_episode('clip')
-                send_msg(conn, {'ok': True, 'video_path': mp4})
-            elif cmd == 'close':
-                break
-            else:
-                send_msg(conn, {'error': f'unknown cmd {cmd}'})
+            conn = None
+            try:
+                conn, addr = srv.accept()
+                print(f"LITE6_WORKER_CLIENT {addr}", flush=True)
+                while True:
+                    msg = recv_msg(conn)
+                    cmd = msg.get('cmd')
+                    if cmd == 'reset':
+                        send_msg(conn, sim.reset(msg.get('logdir',''), msg.get('video', {}), msg.get('video_every', 0), msg.get('download', None)))
+                    elif cmd == 'step':
+                        send_msg(conn, sim.step(msg['action']))
+                    elif cmd == 'save_video':
+                        mp4 = sim.video.save_episode('clip')
+                        send_msg(conn, {'ok': True, 'video_path': mp4})
+                    elif cmd == 'close':
+                        break
+                    else:
+                        send_msg(conn, {'error': f'unknown cmd {cmd}'})
+            except (ConnectionError, OSError):
+                # Client disconnected or socket error; keep server alive.
+                pass
+            finally:
+                try:
+                    if conn:
+                        conn.close()
+                except Exception:
+                    pass
+    except KeyboardInterrupt:
+        pass
     finally:
-        try:
-            if conn:
-                conn.close()
-        except Exception:
-            pass
         try:
             srv.close()
         except Exception:
