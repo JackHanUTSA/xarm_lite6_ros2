@@ -1,6 +1,9 @@
 import socket
 import json
 
+# Run-global step counter (shared across all Lite6RPCEnv instances in this process).
+_RUN_GLOBAL_STEP = 0
+
 import elements
 import embodied
 import numpy as np

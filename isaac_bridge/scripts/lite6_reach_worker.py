@@ -297,7 +297,7 @@ class Lite6ReachSim:
             'is_terminal': False,
         }
 
-    def step(self, action):
+    def step(self, action, global_step=None):
         a = np.clip(np.array(action, np.float32), -1.0, 1.0)
         dq = a * self.cfg.action_scale
         self.q = self.q + dq
@@ -305,7 +305,10 @@ class Lite6ReachSim:
         for _ in range(self.cfg.settle_steps):
             self.sim.step(render=self.video.enabled)
         self.t += 1
-        self.video.global_step += 1
+        if global_step is None:
+            self.video.global_step += 1
+        else:
+            self.video.global_step = int(global_step)
         self.video.capture()
 
         # Periodic clip saving (e.g., every 100 steps)
@@ -374,7 +377,7 @@ def serve(host='127.0.0.1', port=5555):
                     if cmd == 'reset':
                         send_msg(conn, sim.reset(msg.get('logdir',''), msg.get('video', {}), msg.get('video_every', 0), msg.get('download', None)))
                     elif cmd == 'step':
-                        send_msg(conn, sim.step(msg['action']))
+                        send_msg(conn, sim.step(msg['action'], msg.get('global_step', None)))
                     elif cmd == 'save_video':
                         mp4 = sim.video.save_episode('clip')
                         send_msg(conn, {'ok': True, 'video_path': mp4})
