@@ -43,7 +43,7 @@ def recv_msg(sock):
 @dataclass
 class ReachConfig:
     episode_len: int = 200
-    action_scale: float = 0.03
+    action_scale: float = 0.06
     settle_steps: int = 2
     x_min: float = 0.20
     x_max: float = 0.45
@@ -71,6 +71,7 @@ class VideoRecorder:
         self.annot = None
         self.rp = None
         self.cam = None
+        self.debug_lines = []
 
     def configure(self, logdir: str, video: dict, video_every: int = 0, download=None):
         self.logdir = str(logdir or '')
@@ -96,13 +97,27 @@ class VideoRecorder:
         # Create a camera
         cam_path = Sdf.Path('/World/Lite6Cam')
         if not stage.GetPrimAtPath(cam_path):
-            rep.create.camera(position=(0.9, 0.0, 0.7), look_at=(0.0, 0.0, 0.25), name='Lite6Cam')
+            rep.create.camera(position=(0.65, 0.15, 0.45), look_at=(0.15, 0.00, 0.20), name='Lite6Cam')
         self.cam = '/World/Lite6Cam'
 
         self.rp = rep.create.render_product(self.cam, (self.w, self.h))
         self.annot = rep.AnnotatorRegistry.get_annotator('rgb')
         self.annot.attach([self.rp])
         # no writers; we pull frames directly
+
+
+    def _overlay(self, img: np.ndarray, lines):
+        """Draw text overlay on RGB uint8 image in-place."""
+        try:
+            import cv2
+            y = 22
+            for s in lines:
+                cv2.putText(img, str(s), (8, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+                cv2.putText(img, str(s), (8, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 1, cv2.LINE_AA)
+                y += 22
+        except Exception:
+            # Fallback: no overlay
+            return
 
     def reset_episode(self):
         if not self.enabled:
@@ -119,6 +134,8 @@ class VideoRecorder:
             return
         # rgba -> rgb
         rgb = np.asarray(data)[..., :3].copy()
+        if self.debug_lines:
+            self._overlay(rgb, self.debug_lines)
         self.frames.append(rgb)
 
     def save_episode(self, name_prefix='ep'):
@@ -255,6 +272,14 @@ class Lite6ReachSim:
                 pass
             self.app = None
 
+    def _apply_q(self, q):
+        # Use position targets to drive joints (more reliable than set_joint_positions alone).
+        self.art.set_joint_position_targets(q)
+        try:
+            self.art.set_joint_positions(q)
+        except Exception:
+            pass
+
     def _randomize_target(self):
         self._rng.seed(int(time.time() * 1e6) % (2**32 - 1))
         self.target = np.array([
@@ -281,13 +306,18 @@ class Lite6ReachSim:
         self.t = 0
         self.q[:] = 0.0
         self._randomize_target()
-        self.art.set_joint_positions(self.q)
+        self._apply_q(self.q)
         for _ in range(self.cfg.settle_steps):
             self.sim.step(render=self.video.enabled)
         self.video.capture()
 
         ee = self._ee_pos()
         dist = float(np.linalg.norm(ee - self.target))
+        if self.video.enabled:
+            self.video.debug_lines = [
+                f'step={self.video.global_step} t={self.t}',
+                f'dist={dist:.3f}',
+            ]
         return {
             'q': self.q.tolist(),
             'ee_pos': ee.tolist(),
@@ -301,7 +331,7 @@ class Lite6ReachSim:
         a = np.clip(np.array(action, np.float32), -1.0, 1.0)
         dq = a * self.cfg.action_scale
         self.q = self.q + dq
-        self.art.set_joint_positions(self.q)
+        self._apply_q(self.q)
         for _ in range(self.cfg.settle_steps):
             self.sim.step(render=self.video.enabled)
         self.t += 1
@@ -328,6 +358,12 @@ class Lite6ReachSim:
 
         ee = self._ee_pos()
         dist = float(np.linalg.norm(ee - self.target))
+        if self.video.enabled:
+            self.video.debug_lines = [
+                f'step={self.video.global_step} t={self.t}',
+                f'dist={dist:.3f}',
+                f'|a|={float(np.linalg.norm(a)):.3f}',
+            ]
         done = self.t >= self.cfg.episode_len
 
         mp4 = None
