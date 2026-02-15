@@ -76,6 +76,7 @@ class VideoRecorder:
         self.rp = None
         self.cam = None
         self.debug_lines = []
+        self._overlay = lambda _rgb, _lines: None
 
     def configure(self, logdir: str, video: dict, video_every: int = 0, download=None):
         self.logdir = str(logdir or '')
