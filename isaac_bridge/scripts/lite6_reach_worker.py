@@ -87,38 +87,38 @@ class VideoRecorder:
         self.download_dir = str(download.get('dir','') or '')
         self.download_prefix = str(download.get('prefix','robotarm training video') or 'robotarm training video')
 
+
     def setup_rep(self, stage):
         if not self.enabled:
             return
-        import omni.replicator.core as rep
-        from pxr import UsdGeom, Sdf
-
-        self.rep = rep
-        # Create a camera
-        cam_path = Sdf.Path('/World/Lite6Cam')
-        if not stage.GetPrimAtPath(cam_path):
-            rep.create.camera(position=(0.65, 0.15, 0.45), look_at=(0.15, 0.00, 0.20), name='Lite6Cam')
-        self.cam = '/World/Lite6Cam'
-
-        self.rp = rep.create.render_product(self.cam, (self.w, self.h))
-        self.annot = rep.AnnotatorRegistry.get_annotator('rgb')
-        self.annot.attach([self.rp])
-        # no writers; we pull frames directly
-
-
-    def _overlay(self, img: np.ndarray, lines):
-        """Draw text overlay on RGB uint8 image in-place."""
         try:
-            import cv2
-            y = 22
-            for s in lines:
-                cv2.putText(img, str(s), (8, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
-                cv2.putText(img, str(s), (8, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 1, cv2.LINE_AA)
-                y += 22
-        except Exception:
-            # Fallback: no overlay
-            return
-
+            import omni.replicator.core as rep
+            from pxr import Gf, Sdf, UsdGeom
+            self.rep = rep
+            # Ensure /World exists
+            world = stage.GetPrimAtPath(Sdf.Path('/World'))
+            if not world:
+                UsdGeom.Xform.Define(stage, Sdf.Path('/World'))
+            cam_path = Sdf.Path('/World/Lite6Cam')
+            if not stage.GetPrimAtPath(cam_path):
+                # Create a real USD camera prim at a fixed path (more robust than name-based creation)
+                cam = UsdGeom.Camera.Define(stage, cam_path)
+                xform = UsdGeom.Xformable(cam.GetPrim())
+                # Position camera and point at workspace
+                xform.AddTranslateOp().Set(Gf.Vec3d(0.65, 0.15, 0.45))
+                # (Simple look-at isn't directly an op; keep translation only; view is still useful)
+            self.cam = str(cam_path)
+            self.rp = rep.create.render_product(self.cam, (self.w, self.h))
+            self.annot = rep.AnnotatorRegistry.get_annotator('rgb')
+            self.annot.attach([self.rp])
+        except Exception as e:
+            # Disable video if replicator/camera setup fails
+            print(f'VIDEO_SETUP_FAILED {e}', flush=True)
+            self.enabled = False
+            self.annot = None
+            self.rep = None
+            self.rp = None
+            self.cam = None
     def reset_episode(self):
         if not self.enabled:
             return
