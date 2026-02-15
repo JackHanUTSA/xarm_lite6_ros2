@@ -420,8 +420,6 @@ def serve(host='127.0.0.1', port=5555):
     sim = Lite6ReachSim(ReachConfig())
     sim.start()
 
-    try:
-
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((host, int(port)))
