@@ -105,9 +105,27 @@ class VideoRecorder:
                 # Create a real USD camera prim at a fixed path (more robust than name-based creation)
                 cam = UsdGeom.Camera.Define(stage, cam_path)
                 xform = UsdGeom.Xformable(cam.GetPrim())
-                # Position camera and point at workspace
-                xform.AddTranslateOp().Set(Gf.Vec3d(0.65, 0.15, 0.45))
-                # (Simple look-at isn't directly an op; keep translation only; view is still useful)
+                # Side view pose + 5x zoom
+                eye = Gf.Vec3d(0.35, 0.70, 0.30)
+                look = Gf.Vec3d(0.20, 0.00, 0.20)
+                up = Gf.Vec3d(0.0, 0.0, 1.0)
+                fwd = (look - eye)
+                # Build a rotation that points -Z (camera forward) toward fwd.
+                # We approximate with yaw/pitch from fwd.
+                dx, dy, dz = float(fwd[0]), float(fwd[1]), float(fwd[2])
+                yaw = math.degrees(math.atan2(dy, dx))
+                dist_xy = math.hypot(dx, dy) + 1e-9
+                pitch = -math.degrees(math.atan2(dz, dist_xy))
+                xform.AddTranslateOp().Set(eye)
+                xform.AddRotateZOp().Set(yaw)
+                xform.AddRotateYOp().Set(pitch)
+                # Zoom in (increase focal length)
+                try:
+                    cam.CreateFocalLengthAttr().Set(120.0)
+                    cam.CreateHorizontalApertureAttr().Set(20.0)
+                    cam.CreateVerticalApertureAttr().Set(11.25)
+                except Exception:
+                    pass
             self.cam = str(cam_path)
             self.rp = rep.create.render_product(self.cam, (self.w, self.h))
             self.annot = rep.AnnotatorRegistry.get_annotator('rgb')
