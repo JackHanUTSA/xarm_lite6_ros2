@@ -13,6 +13,7 @@ import json
 import time
 import os
 import subprocess
+import select
 from dataclasses import dataclass
 
 import numpy as np
@@ -421,6 +422,9 @@ def serve(host='127.0.0.1', port=5555):
                     continue
 
             try:
+                r, _, _ = select.select([conn], [], [], 0.0)
+                if not r:
+                    continue
                 msg = recv_msg(conn)
                 cmd = msg.get('cmd')
                 if cmd == 'reset':
