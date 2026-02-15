@@ -296,7 +296,11 @@ class Lite6ReachSim:
 
     def _apply_q(self, q):
         # Use position targets to drive joints (more reliable than set_joint_positions alone).
-        self.art.set_joint_position_targets(q)
+        if hasattr(self.art, 'set_joint_position_targets'):
+            try:
+                self.art.set_joint_position_targets(q)
+            except Exception:
+                pass
         try:
             self.art.set_joint_positions(q)
         except Exception:
