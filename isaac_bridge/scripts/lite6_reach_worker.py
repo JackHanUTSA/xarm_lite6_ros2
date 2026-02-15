@@ -12,6 +12,8 @@ import socket
 import json
 import time
 import math
+import faulthandler
+import traceback
 import os
 import subprocess
 import select
@@ -407,6 +409,9 @@ class Lite6ReachSim:
 
 
 def serve(host='127.0.0.1', port=5555):
+    # Note: Isaac can shutdown without a Python traceback.
+    # This wrapper forces any uncaught exception to be logged.
+    
     """Serve RPC requests.
 
     We must keep the Kit app updating even when idle; otherwise Isaac Sim may
@@ -414,6 +419,8 @@ def serve(host='127.0.0.1', port=5555):
     """
     sim = Lite6ReachSim(ReachConfig())
     sim.start()
+
+    try:
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -470,6 +477,12 @@ def serve(host='127.0.0.1', port=5555):
                 conn = None
     except KeyboardInterrupt:
         pass
+    except Exception as e:
+        print('WORKER_FATAL', repr(e), flush=True)
+        traceback.print_exc()
+        raise
+
+        pass
     finally:
         try:
             if conn:
@@ -483,6 +496,10 @@ def serve(host='127.0.0.1', port=5555):
         sim.close()
 
 if __name__ == '__main__':
+    try:
+        faulthandler.enable()
+    except Exception:
+        pass
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument('--host', default='127.0.0.1')
