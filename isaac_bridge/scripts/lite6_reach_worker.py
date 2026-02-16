@@ -327,6 +327,14 @@ class Lite6ReachSim:
         if self.video.enabled:
             print(f'VIDEO_ENABLED logdir={self.video.logdir} fps={self.video.fps} size={self.video.w}x{self.video.h} seconds={self.video.seconds}', flush=True)
         if self.video.enabled and self.video.annot is None:
+            # Aim camera at the robot base (articulation root) if possible
+            try:
+                base, _ = self._get_world_pose(self.stage_path)
+                bx, by, bz = float(base[0]), float(base[1]), float(base[2])
+                self.video.look = (bx, by, bz + 0.25)
+                self.video.eye = (bx + 1.8, by + 1.2, bz + 1.2)
+            except Exception:
+                pass
             self.video.setup_rep(self.stage)
         self.video.reset_episode()
 
