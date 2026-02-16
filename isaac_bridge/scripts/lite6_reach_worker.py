@@ -112,7 +112,7 @@ class VideoRecorder:
             self.cam = cam
             # Add a dome light so the arm isn't black in headless renders
             try:
-                rep.create.light(light_type='dome', intensity=3000)
+                rep.create.light(light_type='dome', intensity=300)
             except Exception:
                 pass
             self.rp = rep.create.render_product(self.cam, (self.w, self.h))
@@ -263,7 +263,7 @@ class Lite6ReachSim:
         PhysxSchema.PhysxSceneAPI.Apply(self.stage.GetPrimAtPath("/physicsScene"))
 
         light = UsdLux.DistantLight.Define(self.stage, Sdf.Path("/DistantLight"))
-        light.CreateIntensityAttr(500)
+        light.CreateIntensityAttr(150)
 
         self.app.update()
         # Render background: black (improves contrast)
@@ -340,8 +340,8 @@ class Lite6ReachSim:
             try:
                 base, _ = self._get_world_pose(self.stage_path)
                 bx, by, bz = float(base[0]), float(base[1]), float(base[2])
-                self.video.look = (bx, by, bz + 0.25)
-                self.video.eye = (bx + 1.8, by + 1.2, bz + 1.2)
+                self.video.look = (bx, by, bz + 0.20)
+                self.video.eye = (bx + 0.9, by + 0.6, bz + 0.7)
             except Exception:
                 pass
             self.video.setup_rep(self.stage)
