@@ -106,9 +106,10 @@ class VideoRecorder:
             if not world:
                 UsdGeom.Xform.Define(stage, Sdf.Path('/World'))
             # Create camera via Replicator (handles orientation robustly)
-            eye = (0.35, 0.70, 0.30)
-            look = (0.20, 0.00, 0.20)
-            cam = rep.create.camera(position=eye, look_at=look)
+            # Wide side-ish view (debug)
+            eye = (2.0, 2.0, 1.5)
+            look = (0.0, 0.0, 0.3)
+            cam = rep.create.camera(position=eye, look_at=look, focal_length=24.0)
             self.cam = cam
             # Add a dome light so the arm isn't black in headless renders
             try:
