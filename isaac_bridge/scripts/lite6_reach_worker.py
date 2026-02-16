@@ -240,6 +240,22 @@ class Lite6ReachSim:
             raise RuntimeError("URDF import failed")
 
         self.stage = omni.usd.get_context().get_stage()
+        # Debug visual: small red cube to verify camera/render pipeline
+        try:
+            from pxr import UsdGeom, Sdf, Gf
+            cube_path = Sdf.Path('/World/DebugCube')
+            if not self.stage.GetPrimAtPath(cube_path):
+                cube = UsdGeom.Cube.Define(self.stage, cube_path)
+                cube.CreateSizeAttr(0.1)
+                xf = UsdGeom.Xformable(cube.GetPrim())
+                xf.AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, 0.30))
+                prim = cube.GetPrim()
+                if prim.HasAttribute('primvars:displayColor'):
+                    prim.GetAttribute('primvars:displayColor').Set([Gf.Vec3f(1.0,0.0,0.0)])
+                else:
+                    prim.CreateAttribute('primvars:displayColor', Sdf.ValueTypeNames.Color3fArray).Set([Gf.Vec3f(1.0,0.0,0.0)])
+        except Exception:
+            pass
         self.stage_path = stage_path
 
         scene = UsdPhysics.Scene.Define(self.stage, Sdf.Path("/physicsScene"))
