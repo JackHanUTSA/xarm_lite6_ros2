@@ -78,9 +78,10 @@ class VideoRecorder:
         self.debug_lines = []
         self._overlay = lambda _rgb, _lines: None
 
-    def configure(self, logdir: str, video: dict, video_every: int = 0, download=None):
+    def configure(self, logdir: str, video: dict, video_every: int = 0, download=None, app=None):
         self.logdir = str(logdir or '')
         self.enabled = bool(self.logdir)
+        self.app = app
         if not self.enabled:
             return
         self.fps = int(video.get('fps', 30))
@@ -103,7 +104,8 @@ class VideoRecorder:
             # Ensure /World exists
             world = stage.GetPrimAtPath(Sdf.Path('/World'))
             if not world:
-                UsdGeom.Xform.Define(stage, Sdf.Path('/World'))            # Create camera via Replicator (handles orientation robustly)
+                UsdGeom.Xform.Define(stage, Sdf.Path('/World'))
+            # Create camera via Replicator (handles orientation robustly)
             eye = (0.35, 0.70, 0.30)
             look = (0.20, 0.00, 0.20)
             cam = rep.create.camera(position=eye, look_at=look)
