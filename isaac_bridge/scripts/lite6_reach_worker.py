@@ -266,6 +266,15 @@ class Lite6ReachSim:
         light.CreateIntensityAttr(500)
 
         self.app.update()
+        # Render background: black (improves contrast)
+        try:
+            import carb
+            s = carb.settings.get_settings()
+            # Try common clear color settings (varies by Kit version)
+            s.set('/rtx/clearColor', [0.0, 0.0, 0.0, 1.0])
+            s.set('/app/viewport/clearColor', [0.0, 0.0, 0.0, 1.0])
+        except Exception:
+            pass
 
         self.sim = SimulationContext(stage_units_in_meters=1.0)
         self.sim.initialize_physics()
