@@ -111,9 +111,9 @@ class Lite6RPCEnv(embodied.Env):
       'success_ee': elements.Space(np.uint8, (), 0, 1),
       'success_vis': elements.Space(np.uint8, (), 0, 1),
       'reward': elements.Space(np.float32),
-      'is_first': elements.Space(np.uint8, (), 0, 1),
-      'is_last': elements.Space(np.uint8, (), 0, 1),
-      'is_terminal': elements.Space(np.uint8, (), 0, 1),
+      'is_first': elements.Space(bool),
+      'is_last': elements.Space(bool),
+      'is_terminal': elements.Space(bool),
     }
 
   @property
@@ -168,9 +168,9 @@ class Lite6RPCEnv(embodied.Env):
       'success_ee': np.uint8(1 if msg.get('success_ee', False) else 0),
       'success_vis': np.uint8(1 if msg.get('success_vis', False) else 0),
       'reward': np.float32(msg.get('reward', 0.0)),
-      'is_first': np.uint8(1 if is_first else 0),
-      'is_last': np.uint8(1 if msg.get('is_last', False) else 0),
-      'is_terminal': np.uint8(1 if msg.get('is_terminal', False) else 0),
+      'is_first': bool(is_first),
+      'is_last': bool(msg.get('is_last', False)),
+      'is_terminal': bool(msg.get('is_terminal', False)),
     }
 
   def close(self):
