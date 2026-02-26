@@ -47,14 +47,28 @@ def recv_msg(sock):
 @dataclass
 class ReachConfig:
     episode_len: int = 200
+
+    # Action scaling (radians per env step). Applied as: q <- q + clip(a,-1,1)*action_scale
     action_scale: float = 0.06
+
+    # Reward shaping weights
+    # reward = -dist - w_u*||a||^2 - w_du*||a - a_prev||^2
+    reward_w_u: float = 0.0
+    reward_w_du: float = 0.0
+
     settle_steps: int = 2
+
+    # Target space (absolute ranges)
     x_min: float = 0.20
     x_max: float = 0.45
     y_min: float = -0.20
     y_max: float = 0.20
     z_min: float = 0.12
     z_max: float = 0.40
+
+    # Curriculum: optional target half-range (meters) around the center of the above ranges.
+    # If set to >0, x/y sampling becomes center +/- target_radius.
+    target_radius: float = 0.0
 
 
 class VideoRecorder:
@@ -73,10 +87,17 @@ class VideoRecorder:
         self.frames = []
         self.rep = None
         self.annot = None
+        self.bbox_annot = None
         self.rp = None
         self.cam = None
         self.debug_lines = []
         self._overlay = lambda _rgb, _lines: None
+
+        # Visual success helpers
+        self.ee_prim_path = '/World/Markers/EE'
+        self.target_prim_path = '/World/Markers/Target'
+        self.last_vis_dist_px = None
+        self._warned_bbox = False
 
     def configure(self, logdir: str, video: dict, video_every: int = 0, download=None, app=None):
         self.logdir = str(logdir or '')
@@ -118,6 +139,16 @@ class VideoRecorder:
             self.rp = rep.create.render_product(self.cam, (self.w, self.h))
             self.annot = rep.AnnotatorRegistry.get_annotator('rgb')
             self.annot.attach([self.rp])
+
+            # For fast "visual reach" checks, try to enable 2D tight bboxes.
+            try:
+                try:
+                    self.bbox_annot = rep.AnnotatorRegistry.get_annotator('bbox_2d_tight')
+                except Exception:
+                    self.bbox_annot = rep.AnnotatorRegistry.get_annotator('bounding_box_2d_tight')
+                self.bbox_annot.attach([self.rp])
+            except Exception:
+                self.bbox_annot = None
         except Exception as e:
             # Disable video if replicator/camera setup fails
             print(f'VIDEO_SETUP_FAILED {e}', flush=True)
@@ -136,11 +167,50 @@ class VideoRecorder:
             return
         # Replicator updates
         self.rep.orchestrator.step()
+
+        # RGB frame
         data = self.annot.get_data()
         if data is None:
             return
         # rgba -> rgb
         rgb = np.asarray(data)[..., :3].copy()
+
+        # Optional: compute visual distance between EE and target markers (pixel-space)
+        self.last_vis_dist_px = None
+        if self.bbox_annot is not None:
+            try:
+                bb = self.bbox_annot.get_data()
+                prim_paths = None
+                rects = None
+                if isinstance(bb, dict):
+                    info = bb.get('info') or {}
+                    prim_paths = info.get('primPaths') or info.get('prim_paths')
+                    rects = bb.get('data') or bb.get('rects')
+                if prim_paths and rects is not None:
+                    prim_paths = list(prim_paths)
+
+                    def center_for(path):
+                        if path not in prim_paths:
+                            return None
+                        i = prim_paths.index(path)
+                        r = rects[i]
+                        try:
+                            x0, y0, x1, y1 = float(r[0]), float(r[1]), float(r[2]), float(r[3])
+                        except Exception:
+                            return None
+                        return ((x0 + x1) * 0.5, (y0 + y1) * 0.5)
+
+                    ce = center_for(self.ee_prim_path)
+                    ct = center_for(self.target_prim_path)
+                    if ce is not None and ct is not None:
+                        dx = float(ce[0] - ct[0])
+                        dy = float(ce[1] - ct[1])
+                        self.last_vis_dist_px = float((dx * dx + dy * dy) ** 0.5)
+            except Exception as e:
+                if not self._warned_bbox:
+                    print(f'VIDEO_BBOX_FAILED {e}', flush=True)
+                    self._warned_bbox = True
+
         if self.debug_lines:
             self._overlay(rgb, self.debug_lines)
         self.frames.append(rgb)
@@ -192,6 +262,9 @@ class VideoRecorder:
 
 
 class Lite6ReachSim:
+    EE_SUCCESS_M: float = 0.01
+    VIS_SUCCESS_PX: float = 9.0
+    VIS_GATE_M: float = 0.03
     def __init__(self, cfg: ReachConfig):
         self.cfg = cfg
         self.app = None
@@ -257,6 +330,40 @@ class Lite6ReachSim:
             pass
         self.stage_path = stage_path
 
+        # Create marker prims for fast visual success checks.
+        self.ee_marker_xf = None
+        self.target_marker_xf = None
+        try:
+            from pxr import UsdGeom, Gf
+            # Ensure parent prims exist
+            UsdGeom.Xform.Define(self.stage, Sdf.Path('/World/Markers'))
+
+            def _make_sphere(path, rgb):
+                prim = self.stage.GetPrimAtPath(Sdf.Path(path))
+                if not prim:
+                    sph = UsdGeom.Sphere.Define(self.stage, Sdf.Path(path))
+                    sph.CreateRadiusAttr(0.015)
+                    prim = sph.GetPrim()
+                xf = UsdGeom.Xformable(prim)
+                # Create a translate op if missing
+                ops = xf.GetOrderedXformOps()
+                if not ops:
+                    op = xf.AddTranslateOp()
+                else:
+                    op = ops[0]
+                # Color
+                if prim.HasAttribute('primvars:displayColor'):
+                    prim.GetAttribute('primvars:displayColor').Set([Gf.Vec3f(*rgb)])
+                else:
+                    prim.CreateAttribute('primvars:displayColor', Sdf.ValueTypeNames.Color3fArray).Set([Gf.Vec3f(*rgb)])
+                return op
+
+            # Green EE marker, Blue target marker
+            self.ee_marker_xf = _make_sphere('/World/Markers/EE', (0.0, 1.0, 0.0))
+            self.target_marker_xf = _make_sphere('/World/Markers/Target', (0.2, 0.4, 1.0))
+        except Exception:
+            pass
+
         scene = UsdPhysics.Scene.Define(self.stage, Sdf.Path("/physicsScene"))
         scene.CreateGravityDirectionAttr().Set(Gf.Vec3f(0.0, 0.0, -1.0))
         scene.CreateGravityMagnitudeAttr().Set(9.81)
@@ -318,17 +425,44 @@ class Lite6ReachSim:
 
     def _randomize_target(self):
         self._rng.seed(int(time.time() * 1e6) % (2**32 - 1))
+
+        # Optional curriculum radius around the center of the configured ranges.
+        # Only affects x/y; z remains sampled from z_min/z_max.
+        cx = 0.5 * (float(self.cfg.x_min) + float(self.cfg.x_max))
+        cy = 0.5 * (float(self.cfg.y_min) + float(self.cfg.y_max))
+        rad = float(getattr(self.cfg, 'target_radius', 0.0) or 0.0)
+        if rad > 0:
+            x_min, x_max = cx - rad, cx + rad
+            y_min, y_max = cy - rad, cy + rad
+        else:
+            x_min, x_max = float(self.cfg.x_min), float(self.cfg.x_max)
+            y_min, y_max = float(self.cfg.y_min), float(self.cfg.y_max)
+
         self.target = np.array([
-            self._rng.uniform(self.cfg.x_min, self.cfg.x_max),
-            self._rng.uniform(self.cfg.y_min, self.cfg.y_max),
-            self._rng.uniform(self.cfg.z_min, self.cfg.z_max),
+            self._rng.uniform(x_min, x_max),
+            self._rng.uniform(y_min, y_max),
+            self._rng.uniform(float(self.cfg.z_min), float(self.cfg.z_max)),
         ], np.float32)
 
     def _ee_pos(self):
         pos, _ = self._get_world_pose(self.ee_path)
         return np.array(pos, np.float32)
 
-    def reset(self, logdir='', video=None, video_every=0, download=None):
+    def reset(self, logdir='', video=None, video_every=0, download=None, cfg_patch=None):
+        # Apply per-run config patches from the RL side (safe, allowlisted fields only).
+        cfg_patch = cfg_patch or {}
+        try:
+            if 'action_scale' in cfg_patch:
+                self.cfg.action_scale = float(cfg_patch['action_scale'])
+            if 'reward_w_u' in cfg_patch:
+                self.cfg.reward_w_u = float(cfg_patch['reward_w_u'])
+            if 'reward_w_du' in cfg_patch:
+                self.cfg.reward_w_du = float(cfg_patch['reward_w_du'])
+            if 'target_radius' in cfg_patch:
+                self.cfg.target_radius = float(cfg_patch['target_radius'])
+        except Exception:
+            pass
+
         # configure video capture on first reset
         if video is None:
             video = {}
@@ -340,8 +474,9 @@ class Lite6ReachSim:
             try:
                 base, _ = self._get_world_pose(self.stage_path)
                 bx, by, bz = float(base[0]), float(base[1]), float(base[2])
-                self.video.look = (bx, by, bz + 0.20)
-                self.video.eye = (bx + 0.9, by + 0.6, bz + 0.7)
+                # Side view (left): place camera at -Y, low height
+                self.video.look = (bx, by, bz + 0.25)
+                self.video.eye = (bx + 0.10, by - 1.20, bz + 0.25)
             except Exception:
                 pass
             self.video.setup_rep(self.stage)
@@ -349,14 +484,26 @@ class Lite6ReachSim:
 
         self.t = 0
         self.q[:] = 0.0
+        self._prev_action = np.zeros((6,), np.float32)
         self._randomize_target()
         self._apply_q(self.q)
         for _ in range(self.cfg.settle_steps):
             self.sim.step(render=self.video.enabled)
-        self.video.capture()
 
         ee = self._ee_pos()
         dist = float(np.linalg.norm(ee - self.target))
+        # Update marker positions (best-effort)
+        try:
+            if self.ee_marker_xf is not None:
+                self.ee_marker_xf.Set((float(ee[0]), float(ee[1]), float(ee[2])))
+            if self.target_marker_xf is not None:
+                self.target_marker_xf.Set((float(self.target[0]), float(self.target[1]), float(self.target[2])))
+        except Exception:
+            pass
+
+        # Capture after markers are placed
+        self.video.capture()
+
         if self.video.enabled:
             self.video.debug_lines = [
                 f'step={self.video.global_step} t={self.t}',
@@ -373,7 +520,7 @@ class Lite6ReachSim:
 
     def step(self, action, global_step=None):
         a = np.clip(np.array(action, np.float32), -1.0, 1.0)
-        dq = a * self.cfg.action_scale
+        dq = a * float(self.cfg.action_scale)
         self.q = self.q + dq
         self._apply_q(self.q)
         for _ in range(self.cfg.settle_steps):
@@ -383,6 +530,18 @@ class Lite6ReachSim:
             self.video.global_step += 1
         else:
             self.video.global_step = int(global_step)
+
+        ee = self._ee_pos()
+        dist = float(np.linalg.norm(ee - self.target))
+        # Update marker positions (best-effort)
+        try:
+            if self.ee_marker_xf is not None:
+                self.ee_marker_xf.Set((float(ee[0]), float(ee[1]), float(ee[2])))
+            if self.target_marker_xf is not None:
+                self.target_marker_xf.Set((float(self.target[0]), float(self.target[1]), float(self.target[2])))
+        except Exception:
+            pass
+
         self.video.capture()
 
         # Periodic clip saving (e.g., every 100 steps)
@@ -400,15 +559,21 @@ class Lite6ReachSim:
                     pass
 
 
-        ee = self._ee_pos()
-        dist = float(np.linalg.norm(ee - self.target))
+        # Visual reach metric from last capture (pixel distance between markers).
+        vis_dist = self.video.last_vis_dist_px
+        success_ee = dist < float(self.EE_SUCCESS_M)
+        success_vis = (vis_dist is not None) and (vis_dist < float(self.VIS_SUCCESS_PX)) and (dist < float(self.VIS_GATE_M))
+
         if self.video.enabled:
             self.video.debug_lines = [
                 f'step={self.video.global_step} t={self.t}',
                 f'dist={dist:.3f}',
+                f'vis_px={vis_dist:.1f}' if vis_dist is not None else 'vis_px=NA',
                 f'|a|={float(np.linalg.norm(a)):.3f}',
+                f'succ_ee={int(success_ee)} succ_vis={int(success_vis)}',
             ]
-        done = self.t >= self.cfg.episode_len
+
+        done = (self.t >= self.cfg.episode_len) or success_ee or success_vis
 
         mp4 = None
         if done:
@@ -417,11 +582,22 @@ class Lite6ReachSim:
         if mp4:
             print(f'VIDEO_SAVED {mp4}', flush=True)
 
+        # Reward: task + smoothness shaping
+        w_u = float(getattr(self.cfg, 'reward_w_u', 0.0) or 0.0)
+        w_du = float(getattr(self.cfg, 'reward_w_du', 0.0) or 0.0)
+        du = a - getattr(self, '_prev_action', np.zeros_like(a))
+        rew = float(-dist - w_u * float(np.sum(a * a)) - w_du * float(np.sum(du * du)))
+        self._prev_action = a.copy()
+
         out = {
             'q': self.q.tolist(),
             'ee_pos': ee.tolist(),
             'target_pos': self.target.tolist(),
-            'reward': float(-dist),
+            'dist': float(dist),
+            'vis_dist_px': None if vis_dist is None else float(vis_dist),
+            'success_ee': bool(success_ee),
+            'success_vis': bool(success_vis),
+            'reward': float(rew),
             'is_last': bool(done),
             'is_terminal': False,
         }
@@ -474,7 +650,13 @@ def serve(host='127.0.0.1', port=5555):
                 msg = recv_msg(conn)
                 cmd = msg.get('cmd')
                 if cmd == 'reset':
-                    send_msg(conn, sim.reset(msg.get('logdir',''), msg.get('video', {}), msg.get('video_every', 0), msg.get('download', None)))
+                    send_msg(conn, sim.reset(
+                        msg.get('logdir',''),
+                        msg.get('video', {}),
+                        msg.get('video_every', 0),
+                        msg.get('download', None),
+                        msg.get('cfg', None),
+                    ))
                 elif cmd == 'step':
                     send_msg(conn, sim.step(msg['action'], msg.get('global_step', None)))
                 elif cmd == 'save_video':

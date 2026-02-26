@@ -50,7 +50,27 @@ def _copy_video_to_downloads(src_path: str, step_count: int, download_dir: str, 
 class Lite6RPCEnv(embodied.Env):
   """Embodied env proxying to Isaac worker over TCP."""
 
-  def __init__(self, task, index=0, host='127.0.0.1', port=5555, timeout=30.0, logdir='', video_fps=30, video_w=640, video_h=480, video_seconds=20, video_every=0, download_dir='~/Downloads', download_prefix='robotarm training video'):
+  def __init__(
+    self,
+    task,
+    index=0,
+    host='127.0.0.1',
+    port=5555,
+    timeout=30.0,
+    logdir='',
+    video_fps=30,
+    video_w=640,
+    video_h=480,
+    video_seconds=20,
+    video_every=0,
+    download_dir='~/Downloads',
+    download_prefix='robotarm training video',
+    # Patchable knobs forwarded to the worker on reset.
+    action_scale=None,
+    reward_w_u=None,
+    reward_w_du=None,
+    target_radius=None,
+  ):
     self._task = task
     self._index = int(index)
     self._host = host
@@ -64,6 +84,11 @@ class Lite6RPCEnv(embodied.Env):
     self._download_prefix = str(download_prefix)
     self._sock = None
     self._done = True
+
+    self._action_scale = None if action_scale is None else float(action_scale)
+    self._reward_w_u = None if reward_w_u is None else float(reward_w_u)
+    self._reward_w_du = None if reward_w_du is None else float(reward_w_du)
+    self._target_radius = None if target_radius is None else float(target_radius)
 
   def _connect(self):
     if self._sock is not None:
@@ -80,6 +105,10 @@ class Lite6RPCEnv(embodied.Env):
       'q': elements.Space(np.float32, (6,)),
       'ee_pos': elements.Space(np.float32, (3,)),
       'target_pos': elements.Space(np.float32, (3,)),
+      'dist': elements.Space(np.float32),
+      'vis_dist_px': elements.Space(np.float32),
+      'success_ee': elements.Space(bool),
+      'success_vis': elements.Space(bool),
       'reward': elements.Space(np.float32),
       'is_first': elements.Space(bool),
       'is_last': elements.Space(bool),
@@ -96,7 +125,22 @@ class Lite6RPCEnv(embodied.Env):
   def step(self, action):
     self._connect()
     if action['reset'] or self._done:
-      _send(self._sock, {'cmd': 'reset', 'task': self._task, 'logdir': self._logdir, 'video': self._video, 'video_every': self._video_every, 'download': {'dir': self._download_dir, 'prefix': self._download_prefix}})
+      cfg = {
+        'action_scale': getattr(self, '_action_scale', None),
+        'reward_w_u': getattr(self, '_reward_w_u', None),
+        'reward_w_du': getattr(self, '_reward_w_du', None),
+        'target_radius': getattr(self, '_target_radius', None),
+      }
+      cfg = {k: v for k, v in cfg.items() if v is not None}
+      _send(self._sock, {
+        'cmd': 'reset',
+        'task': self._task,
+        'logdir': self._logdir,
+        'video': self._video,
+        'video_every': self._video_every,
+        'download': {'dir': self._download_dir, 'prefix': self._download_prefix},
+        'cfg': cfg,
+      })
       msg = _recv(self._sock)
       self._done = False
       return self._format(msg, is_first=True)
@@ -113,10 +157,15 @@ class Lite6RPCEnv(embodied.Env):
     return self._format(msg)
 
   def _format(self, msg, is_first=False):
+    vis = msg.get('vis_dist_px', None)
     return {
       'q': np.asarray(msg['q'], np.float32),
       'ee_pos': np.asarray(msg['ee_pos'], np.float32),
       'target_pos': np.asarray(msg['target_pos'], np.float32),
+      'dist': np.float32(msg.get('dist', 0.0)),
+      'vis_dist_px': np.float32(1e9 if vis is None else vis),
+      'success_ee': bool(msg.get('success_ee', False)),
+      'success_vis': bool(msg.get('success_vis', False)),
       'reward': np.float32(msg.get('reward', 0.0)),
       'is_first': bool(is_first),
       'is_last': bool(msg.get('is_last', False)),

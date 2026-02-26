@@ -36,6 +36,7 @@ def main(argv=None):
 
   # Inject env.lite6 defaults so CLI flags are accepted.
   configs['defaults'].setdefault('env', {})
+  configs['defaults'].setdefault('env', {})
   configs['defaults']['env'].setdefault('lite6', {
       'host': '127.0.0.1',
       'port': 5555,
@@ -49,6 +50,12 @@ def main(argv=None):
       'video_every': 0,
       'download_dir': '~/Downloads',
       'download_prefix': 'robotarm training video',
+
+      # Patchable control + reward knobs (used by the supervisor).
+      'action_scale': 0.06,
+      'reward_w_u': 0.0,
+      'reward_w_du': 0.0,
+      'target_radius': 0.0,
   })
   # Make sure newly-added keys exist even if lite6 dict already existed.
   configs['defaults']['env'].setdefault('lite6', {})
@@ -56,6 +63,10 @@ def main(argv=None):
   configs['defaults']['env']['lite6'].setdefault('port_base', 5555)
   configs['defaults']['env']['lite6'].setdefault('download_dir', '~/Downloads')
   configs['defaults']['env']['lite6'].setdefault('download_prefix', 'robotarm training video')
+  configs['defaults']['env']['lite6'].setdefault('action_scale', 0.06)
+  configs['defaults']['env']['lite6'].setdefault('reward_w_u', 0.0)
+  configs['defaults']['env']['lite6'].setdefault('reward_w_du', 0.0)
+  configs['defaults']['env']['lite6'].setdefault('target_radius', 0.0)
 
   parsed, other = elements.Flags(configs=['defaults']).parse_known(argv)
   config = elements.Config(configs['defaults'])
