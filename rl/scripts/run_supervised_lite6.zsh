@@ -9,5 +9,8 @@ export LITE6_VENV=${LITE6_VENV:-"$HOME/ws_xarm/rl/.venv/bin/activate"}
 # Start worker (idempotent)
 $HOME/ws_xarm/rl/scripts/start_lite6_worker.zsh
 
+# Activate venv so ruamel.yaml and dreamerv3 deps are available
+source "$LITE6_VENV"
+
 # Run supervisor
 python3 $HOME/ws_xarm/rl/scripts/supervised_train_lite6.py

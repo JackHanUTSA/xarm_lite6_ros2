@@ -143,9 +143,11 @@ def apply_patch_to_config(logdir: Path, patch: Dict[str, float]):
 
 
 def run_train(venv_activate: str, logdir: Path, steps: int, checkpoint_dir: Optional[Path]):
+    # Ensure we run from the rl project directory so dreamerv3_lite6_main.py is found.
+    proj = Path.home() / 'ws_xarm/rl'
     cmd = [
         'zsh', '-lc',
-        f"source {venv_activate} && python dreamerv3_lite6_main.py --task lite6_reach --logdir {logdir} --run.steps {steps} --run.envs 1" + (
+        f"cd {proj} && source {venv_activate} && python dreamerv3_lite6_main.py --task lite6_reach --logdir {logdir} --run.steps {steps} --run.envs 1" + (
             f" --run.from_checkpoint {checkpoint_dir}" if checkpoint_dir else ""
         ) + " --env.lite6.host 127.0.0.1 --env.lite6.port 5555 --env.lite6.video_every 500 --env.lite6.download_dir ~/Downloads --env.lite6.download_prefix 'robotarm training video (left+visgate)'"
     ]
