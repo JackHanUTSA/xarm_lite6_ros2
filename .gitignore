@@ -5,3 +5,10 @@ log/
 .DS_Store
 *.swp
 src/xarm_ros2/
+
+# Local caches / runs
+rl/.venv/
+rl/__pycache__/
+rl/scripts/__pycache__/
+isaac_bridge/scripts/__pycache__/
+rl/logdir/
