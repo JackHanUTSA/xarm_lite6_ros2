@@ -12,3 +12,12 @@ rl/__pycache__/
 rl/scripts/__pycache__/
 isaac_bridge/scripts/__pycache__/
 rl/logdir/
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# Local venvs
+.venv/

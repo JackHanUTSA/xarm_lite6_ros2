@@ -1,0 +1,20 @@
+[project]
+name = "supervisor_v6"
+version = "0.0.1"
+description = "Supervisor Agent V6 scaffold"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy<2.0",
+  "opencv-python-headless",
+  "h5py",
+]
+
+[tool.ruff]
+line-length = 110
+
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
