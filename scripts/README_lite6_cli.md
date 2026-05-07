@@ -2,6 +2,9 @@
 
 Quick control helpers for the UFactory xArm Lite6 ROS2 stack.
 
+Full operator instructions for the imitation/preview/execution workflow:
+- `~/ws_xarm/docs/lite6-imitation-usage.md`
+
 ## Usage
 
 ```zsh

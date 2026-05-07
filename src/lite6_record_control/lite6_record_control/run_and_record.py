@@ -1,44 +1,37 @@
+import json
 import os
-import time
 import signal
 import subprocess
+import time
 from datetime import datetime
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 
-from xarm_msgs.srv import Call, SetInt16, SetInt16ById, MoveJoint
+from sensor_msgs.msg import JointState
+from std_msgs.msg import String
+from std_srvs.srv import Trigger
 
 
 class RunAndRecord(Node):
-    def ros2_service_call(self, cmd: str):
-        # Run via shell to avoid rclpy executor invalid-handle issues
-        import subprocess
-        full = ["bash", "-lc", cmd]
-        p = subprocess.run(full, capture_output=True, text=True)
-        if p.returncode != 0:
-            raise RuntimeError(f"Command failed ({p.returncode}): {cmd}\nSTDOUT:\n{p.stdout}\nSTDERR:\n{p.stderr}")
-        return p.stdout
-
     def __init__(self):
         super().__init__('run_and_record')
 
-        # Recording params
-        self.declare_parameter('cam_left', '/dev/video2')   # C920
-        self.declare_parameter('cam_right', '/dev/video0')  # M9
+        self.declare_parameter('cam_left', '/dev/video2')
+        self.declare_parameter('cam_right', '/dev/video0')
         self.declare_parameter('fps', 15)
         self.declare_parameter('size', '1280x720')
         self.declare_parameter('crf', 23)
         self.declare_parameter('preset', 'veryfast')
         self.declare_parameter('out_dir', os.path.expanduser('~/Videos/robot_monitor'))
 
-        # Motion params
-        self.declare_parameter('speed', 0.3)   # radians/sec-ish per vendor; keep conservative
-        self.declare_parameter('acc', 1.0)
-        self.declare_parameter('timeout', 60.0)
-
-        # Default motion: base joint sweep (radians)
-        self.declare_parameter('j1_target', 0.6)  # ~34 deg
+        self.declare_parameter('move_wait_sec', 3.0)
+        self.declare_parameter('j1_target', 0.6)
+        self.declare_parameter('prepare_service', '/lite6_motion/prepare_robot')
+        self.declare_parameter('home_service', '/lite6_motion/go_home')
+        self.declare_parameter('status_topic', '/lite6_motion/status')
+        self.declare_parameter('joint_command_topic', '/lite6_motion/joint_command')
 
         self.cam_left = str(self.get_parameter('cam_left').value)
         self.cam_right = str(self.get_parameter('cam_right').value)
@@ -48,20 +41,54 @@ class RunAndRecord(Node):
         self.preset = str(self.get_parameter('preset').value)
         self.out_dir = str(self.get_parameter('out_dir').value)
 
-        self.speed = float(self.get_parameter('speed').value)
-        self.acc = float(self.get_parameter('acc').value)
-        self.timeout = float(self.get_parameter('timeout').value)
+        self.move_wait_sec = float(self.get_parameter('move_wait_sec').value)
         self.j1_target = float(self.get_parameter('j1_target').value)
 
-        os.makedirs(self.out_dir, exist_ok=True)
+        self.prepare_service = str(self.get_parameter('prepare_service').value)
+        self.home_service = str(self.get_parameter('home_service').value)
+        self.status_topic = str(self.get_parameter('status_topic').value)
+        self.joint_command_topic = str(self.get_parameter('joint_command_topic').value)
 
+        os.makedirs(self.out_dir, exist_ok=True)
         ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         self.out_path = os.path.join(self.out_dir, f'robot-{ts}.mp4')
         self.ff = None
+        self.status_payload = None
 
-    def _wait_srv(self, cli, name, timeout=10.0):
-        if not cli.wait_for_service(timeout_sec=timeout):
-            raise RuntimeError(f'service not available: {name}')
+        qos = QoSProfile(depth=1)
+        qos.reliability = QoSReliabilityPolicy.RELIABLE
+        qos.durability = QoSDurabilityPolicy.VOLATILE
+        self.create_subscription(String, self.status_topic, self._on_status, qos)
+        self.cmd_pub = self.create_publisher(JointState, self.joint_command_topic, 10)
+        self.prepare_cli = self.create_client(Trigger, self.prepare_service)
+        self.home_cli = self.create_client(Trigger, self.home_service)
+
+    def _on_status(self, msg: String):
+        try:
+            self.status_payload = json.loads(msg.data)
+        except Exception:
+            self.status_payload = None
+
+    def wait_for_status(self, timeout_sec=2.0):
+        end = time.time() + timeout_sec
+        while time.time() < end and self.status_payload is None:
+            rclpy.spin_once(self, timeout_sec=0.1)
+        if self.status_payload is None:
+            raise RuntimeError('no lite6_motion status received')
+        return self.status_payload
+
+    def call_trigger(self, client):
+        if not client.wait_for_service(timeout_sec=2.0):
+            raise RuntimeError(f'service unavailable: {client.srv_name}')
+        future = client.call_async(Trigger.Request())
+        rclpy.spin_until_future_complete(self, future, timeout_sec=5.0)
+        result = future.result()
+        if result is None:
+            raise RuntimeError(f'service call failed: {client.srv_name}')
+        if not result.success:
+            raise RuntimeError(result.message)
+        return result.message
+
     def start_recording(self):
         cmd = [
             'ffmpeg', '-hide_banner', '-loglevel', 'warning',
@@ -77,7 +104,7 @@ class RunAndRecord(Node):
         ]
         self.get_logger().info(f'Starting recording -> {self.out_path}')
         self.ff = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(0.8)  # let buffers fill
+        time.sleep(0.8)
 
     def stop_recording(self):
         if not self.ff:
@@ -93,58 +120,37 @@ class RunAndRecord(Node):
                 pass
         self.ff = None
 
-    def arm_ready(self):
-        # best-effort clear + enable + mode/state
-        self.ros2_service_call(
-            'cd ~/ws_xarm && source /opt/ros/humble/setup.bash && source ~/ws_xarm/install/setup.bash && ' +
-            'ros2 service call /ufactory/clean_error xarm_msgs/srv/Call "{}"'
-        )
-        try:
-            self.ros2_service_call(
-                'cd ~/ws_xarm && source /opt/ros/humble/setup.bash && source ~/ws_xarm/install/setup.bash && ' +
-                'ros2 service call /ufactory/clean_warn xarm_msgs/srv/Call \"{}\"'
-            )
-        except Exception:
-            pass
-        self.ros2_service_call(
-            'cd ~/ws_xarm && source /opt/ros/humble/setup.bash && source ~/ws_xarm/install/setup.bash && ' +
-            'ros2 service call /ufactory/motion_enable xarm_msgs/srv/SetInt16ById "{id: 8, data: 1}"'
-        )
-        self.ros2_service_call(
-            'cd ~/ws_xarm && source /opt/ros/humble/setup.bash && source ~/ws_xarm/install/setup.bash && ' +
-            'ros2 service call /ufactory/set_mode xarm_msgs/srv/SetInt16 "{data: 0}"'
-        )
-        self.ros2_service_call(
-            'cd ~/ws_xarm && source /opt/ros/humble/setup.bash && source ~/ws_xarm/install/setup.bash && ' +
-            'ros2 service call /ufactory/set_state xarm_msgs/srv/SetInt16 "{data: 0}"'
-        )
-
-    def move_abs(self, angles):
-        # angles in radians, absolute
-        angles_str = '[' + ', '.join(f'{float(a):.6f}' for a in angles) + ']'
-        cmd = (
-            'cd ~/ws_xarm && source /opt/ros/humble/setup.bash && source ~/ws_xarm/install/setup.bash && ' +
-            'ros2 service call /ufactory/set_servo_angle xarm_msgs/srv/MoveJoint ' +
-            f"\"{{angles: {angles_str}, speed: {self.speed}, acc: {self.acc}, mvtime: 0.0, wait: true, timeout: {self.timeout}, radius: -1.0, relative: false}}\""
-        )
-        out = self.ros2_service_call(cmd)
-        if 'ret=0' not in out and 'ret: 0' not in out:
-            raise RuntimeError('MoveJoint did not report success')
+    def publish_joint_target(self, angles):
+        msg = JointState()
+        msg.name = [f'joint{i}' for i in range(1, 7)]
+        msg.position = [float(a) for a in angles]
+        for _ in range(5):
+            self.cmd_pub.publish(msg)
+            rclpy.spin_once(self, timeout_sec=0.05)
 
     def run(self):
-
         try:
-            self.arm_ready()
+            self.call_trigger(self.prepare_cli)
+            status = self.wait_for_status()
+            start = list(status.get('joint_positions') or [0.0] * 6)
+            if len(start) < 6:
+                raise RuntimeError('lite6_motion status missing complete joint state')
+
             self.start_recording()
+            self.get_logger().info(f'Moving base joint to {self.j1_target} rad and back through lite6_motion')
 
-            # Ensure starting at zero
-            self.move_abs([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+            target = start[:6]
+            target[0] = self.j1_target
+            self.publish_joint_target(target)
+            time.sleep(self.move_wait_sec)
 
-            self.get_logger().info(f'Moving base joint to {self.j1_target} rad and back')
-            self.move_abs([self.j1_target, 0.0, 0.0, 0.0, 0.0, 0.0])
-            # Always return to zero at end
-            self.move_abs([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+            self.publish_joint_target(start[:6])
+            time.sleep(self.move_wait_sec)
 
+            try:
+                self.call_trigger(self.home_cli)
+            except Exception as exc:
+                self.get_logger().warning(f'go_home failed at end: {exc}')
         finally:
             self.stop_recording()
 
@@ -157,11 +163,10 @@ def main():
     node = RunAndRecord()
     try:
         out = node.run()
-        # print a machine-friendly marker
         print(f'VIDEO:{out}')
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == '__main__':

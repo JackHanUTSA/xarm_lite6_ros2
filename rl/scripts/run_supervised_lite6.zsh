@@ -1,8 +1,8 @@
 #!/usr/bin/env zsh
 set -euo pipefail
 
-# Supervisor settings
-export LITE6_LOGDIR=${LITE6_LOGDIR:-"$HOME/ws_xarm/rl/logdir"}
+# Supervisor settings (DreamerV3)
+export LITE6_LOGDIR=${LITE6_LOGDIR:-"$HOME/ws_xarm/rl/logdir_v3"}
 export LITE6_CHUNK=${LITE6_CHUNK:-2000}
 export LITE6_VENV=${LITE6_VENV:-"$HOME/ws_xarm/rl/.venv/bin/activate"}
 

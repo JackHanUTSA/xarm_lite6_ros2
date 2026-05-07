@@ -1,0 +1,13 @@
+project_name: epuck2_sim_real_control
+robot_name: epuck2
+mode: sim
+sim_backend: webots
+real_backend: epuck2_driver
+policy_topic: /epuck2/cmd_vel
+observation_topic: /epuck2/odom
+enable_real_robot: false
+require_operator_confirm: true
+notes:
+  - Start in simulation first.
+  - Use the same observation/action contract in sim and real.
+  - Turn on real hardware only after validating limits and stop behavior.

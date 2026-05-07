@@ -1,0 +1,46 @@
+{"ts": 1772809824.1702678, "job_id": "job_20260306_091024_d2ec6f", "stage": "init", "kind": "stage_started", "message": "job started"}
+{"ts": 1772809824.1711693, "job_id": "job_20260306_091024_d2ec6f", "stage": "validate", "kind": "stage_started", "message": "validating request"}
+{"ts": 1772809824.2715452, "job_id": "job_20260306_091024_d2ec6f", "stage": "validate", "kind": "stage_finished", "message": "ok"}
+{"ts": 1772809824.2717085, "job_id": "job_20260306_091024_d2ec6f", "stage": "connect_robot", "kind": "stage_started", "message": "connecting robot interface"}
+{"ts": 1772809824.2717798, "job_id": "job_20260306_091024_d2ec6f", "stage": "connect_robot", "kind": "progress", "message": "connecting robot interface (1/5)", "pct": 20}
+{"ts": 1772809824.3719962, "job_id": "job_20260306_091024_d2ec6f", "stage": "connect_robot", "kind": "progress", "message": "connecting robot interface (2/5)", "pct": 40}
+{"ts": 1772809824.4721968, "job_id": "job_20260306_091024_d2ec6f", "stage": "connect_robot", "kind": "progress", "message": "connecting robot interface (3/5)", "pct": 60}
+{"ts": 1772809824.5724359, "job_id": "job_20260306_091024_d2ec6f", "stage": "connect_robot", "kind": "progress", "message": "connecting robot interface (4/5)", "pct": 80}
+{"ts": 1772809824.672868, "job_id": "job_20260306_091024_d2ec6f", "stage": "connect_robot", "kind": "progress", "message": "connecting robot interface (5/5)", "pct": 100}
+{"ts": 1772809824.7731683, "job_id": "job_20260306_091024_d2ec6f", "stage": "connect_robot", "kind": "stage_finished", "message": "done"}
+{"ts": 1772809824.773392, "job_id": "job_20260306_091024_d2ec6f", "stage": "discover_cameras", "kind": "stage_started", "message": "discovering cameras"}
+{"ts": 1772809824.7734663, "job_id": "job_20260306_091024_d2ec6f", "stage": "discover_cameras", "kind": "progress", "message": "discovering cameras (1/5)", "pct": 20}
+{"ts": 1772809824.8736668, "job_id": "job_20260306_091024_d2ec6f", "stage": "discover_cameras", "kind": "progress", "message": "discovering cameras (2/5)", "pct": 40}
+{"ts": 1772809824.9739213, "job_id": "job_20260306_091024_d2ec6f", "stage": "discover_cameras", "kind": "progress", "message": "discovering cameras (3/5)", "pct": 60}
+{"ts": 1772809825.0741751, "job_id": "job_20260306_091024_d2ec6f", "stage": "discover_cameras", "kind": "progress", "message": "discovering cameras (4/5)", "pct": 80}
+{"ts": 1772809825.1744606, "job_id": "job_20260306_091024_d2ec6f", "stage": "discover_cameras", "kind": "progress", "message": "discovering cameras (5/5)", "pct": 100}
+{"ts": 1772809825.2747328, "job_id": "job_20260306_091024_d2ec6f", "stage": "discover_cameras", "kind": "stage_finished", "message": "done"}
+{"ts": 1772809825.2750125, "job_id": "job_20260306_091024_d2ec6f", "stage": "record_motion", "kind": "stage_started", "message": "recording motion dataset"}
+{"ts": 1772809825.2750876, "job_id": "job_20260306_091024_d2ec6f", "stage": "record_motion", "kind": "progress", "message": "recording motion dataset (1/5)", "pct": 20}
+{"ts": 1772809825.3752887, "job_id": "job_20260306_091024_d2ec6f", "stage": "record_motion", "kind": "progress", "message": "recording motion dataset (2/5)", "pct": 40}
+{"ts": 1772809825.4755425, "job_id": "job_20260306_091024_d2ec6f", "stage": "record_motion", "kind": "progress", "message": "recording motion dataset (3/5)", "pct": 60}
+{"ts": 1772809825.575796, "job_id": "job_20260306_091024_d2ec6f", "stage": "record_motion", "kind": "progress", "message": "recording motion dataset (4/5)", "pct": 80}
+{"ts": 1772809825.6760883, "job_id": "job_20260306_091024_d2ec6f", "stage": "record_motion", "kind": "progress", "message": "recording motion dataset (5/5)", "pct": 100}
+{"ts": 1772809825.7763505, "job_id": "job_20260306_091024_d2ec6f", "stage": "record_motion", "kind": "stage_finished", "message": "done"}
+{"ts": 1772809825.7765675, "job_id": "job_20260306_091024_d2ec6f", "stage": "reconstruct_world", "kind": "stage_started", "message": "reconstructing scene"}
+{"ts": 1772809825.7766428, "job_id": "job_20260306_091024_d2ec6f", "stage": "reconstruct_world", "kind": "progress", "message": "reconstructing scene (1/5)", "pct": 20}
+{"ts": 1772809825.8768675, "job_id": "job_20260306_091024_d2ec6f", "stage": "reconstruct_world", "kind": "progress", "message": "reconstructing scene (2/5)", "pct": 40}
+{"ts": 1772809825.977122, "job_id": "job_20260306_091024_d2ec6f", "stage": "reconstruct_world", "kind": "progress", "message": "reconstructing scene (3/5)", "pct": 60}
+{"ts": 1772809826.077379, "job_id": "job_20260306_091024_d2ec6f", "stage": "reconstruct_world", "kind": "progress", "message": "reconstructing scene (4/5)", "pct": 80}
+{"ts": 1772809826.1776366, "job_id": "job_20260306_091024_d2ec6f", "stage": "reconstruct_world", "kind": "progress", "message": "reconstructing scene (5/5)", "pct": 100}
+{"ts": 1772809826.2779057, "job_id": "job_20260306_091024_d2ec6f", "stage": "reconstruct_world", "kind": "stage_finished", "message": "done"}
+{"ts": 1772809826.278145, "job_id": "job_20260306_091024_d2ec6f", "stage": "build_urdf", "kind": "stage_started", "message": "building URDF"}
+{"ts": 1772809826.2782195, "job_id": "job_20260306_091024_d2ec6f", "stage": "build_urdf", "kind": "progress", "message": "building URDF (1/5)", "pct": 20}
+{"ts": 1772809826.378447, "job_id": "job_20260306_091024_d2ec6f", "stage": "build_urdf", "kind": "progress", "message": "building URDF (2/5)", "pct": 40}
+{"ts": 1772809826.478699, "job_id": "job_20260306_091024_d2ec6f", "stage": "build_urdf", "kind": "progress", "message": "building URDF (3/5)", "pct": 60}
+{"ts": 1772809826.5789902, "job_id": "job_20260306_091024_d2ec6f", "stage": "build_urdf", "kind": "progress", "message": "building URDF (4/5)", "pct": 80}
+{"ts": 1772809826.6792498, "job_id": "job_20260306_091024_d2ec6f", "stage": "build_urdf", "kind": "progress", "message": "building URDF (5/5)", "pct": 100}
+{"ts": 1772809826.7795177, "job_id": "job_20260306_091024_d2ec6f", "stage": "build_urdf", "kind": "stage_finished", "message": "done"}
+{"ts": 1772809826.7797456, "job_id": "job_20260306_091024_d2ec6f", "stage": "convert_usd", "kind": "stage_started", "message": "converting to USD"}
+{"ts": 1772809826.779856, "job_id": "job_20260306_091024_d2ec6f", "stage": "convert_usd", "kind": "progress", "message": "converting to USD (1/5)", "pct": 20}
+{"ts": 1772809826.8800619, "job_id": "job_20260306_091024_d2ec6f", "stage": "convert_usd", "kind": "progress", "message": "converting to USD (2/5)", "pct": 40}
+{"ts": 1772809826.9803193, "job_id": "job_20260306_091024_d2ec6f", "stage": "convert_usd", "kind": "progress", "message": "converting to USD (3/5)", "pct": 60}
+{"ts": 1772809827.0805738, "job_id": "job_20260306_091024_d2ec6f", "stage": "convert_usd", "kind": "progress", "message": "converting to USD (4/5)", "pct": 80}
+{"ts": 1772809827.1808562, "job_id": "job_20260306_091024_d2ec6f", "stage": "convert_usd", "kind": "progress", "message": "converting to USD (5/5)", "pct": 100}
+{"ts": 1772809827.2811186, "job_id": "job_20260306_091024_d2ec6f", "stage": "convert_usd", "kind": "stage_finished", "message": "done"}
+{"ts": 1772809827.2813356, "job_id": "job_20260306_091024_d2ec6f", "stage": "done", "kind": "job_finished", "message": "job finished"}

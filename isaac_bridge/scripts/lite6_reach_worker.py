@@ -48,6 +48,28 @@ def recv_msg(sock):
 class ReachConfig:
     episode_len: int = 200
 
+    # Collision handling
+    # If enabled, any collision (self or world) will terminate the episode and apply
+    # an additional negative reward.
+    collision_terminate: bool = True
+    collision_penalty_self: float = 50.0
+    collision_penalty_world: float = 20.0
+
+    # Contact-force based collision monitor (polls per step; does not rely on PhysX events)
+    contact_monitor: bool = True
+    contact_force_thresh: float = 1.0
+
+    # Posture-based self-collision guard (heuristic fallback).
+    fold_guard: bool = True
+    fold_q1_thresh: float = 2.2
+    fold_q2_thresh: float = 2.2
+    fold_penalty: float = 50.0
+
+    # Telemetry logging (for LLM supervisor)
+    telemetry_enabled: bool = True
+    telemetry_every: int = 5
+    telemetry_path: str = '/tmp/lite6_joint_telemetry.jsonl'
+
     # Action scaling (radians per env step). Applied as: q <- q + clip(a,-1,1)*action_scale
     action_scale: float = 0.06
 
@@ -83,6 +105,15 @@ class VideoRecorder:
         self.video_every = 0
         self.download_dir = ''
         self.download_prefix = 'robotarm training video'
+
+        # DreamerV4 dataset recording (frames + actions + proprio).
+        # Enabled only when `record_v4` is provided on reset() and video is enabled.
+        self.record_enabled = False
+        self.record_root = ''
+        self.record_every = 1
+        self.record_episode_dir = ''
+        self.record_step = 0
+        self.record_f_steps = None
         self.global_step = 0  # run-global step counter (not reset per episode)
         self.frames = []
         self.rep = None
@@ -99,7 +130,7 @@ class VideoRecorder:
         self.last_vis_dist_px = None
         self._warned_bbox = False
 
-    def configure(self, logdir: str, video: dict, video_every: int = 0, download=None, app=None):
+    def configure(self, logdir: str, video: dict, video_every: int = 0, download=None, record_v4=None, app=None):
         self.logdir = str(logdir or '')
         self.enabled = bool(self.logdir)
         self.app = app
@@ -113,6 +144,20 @@ class VideoRecorder:
         download = download or {}
         self.download_dir = str(download.get('dir','') or '')
         self.download_prefix = str(download.get('prefix','robotarm training video') or 'robotarm training video')
+
+        # Recording config (DreamerV4 pipeline).
+        record_v4 = record_v4 or {}
+        self.record_enabled = bool(record_v4.get('enabled', False))
+        self.record_every = int(record_v4.get('every', 1) or 1)
+        if self.record_every <= 0:
+            self.record_every = 1
+        rec_dir = str(record_v4.get('dir', '') or '')
+        self.record_root = os.path.join(self.logdir, rec_dir) if (self.record_enabled and rec_dir) else ''
+        if self.record_enabled and not self.record_root:
+            # If enabled but no dir provided, default to a clearly-labeled folder.
+            self.record_root = os.path.join(self.logdir, 'dataset_v4')
+        if self.record_enabled:
+            os.makedirs(self.record_root, exist_ok=True)
 
 
     def setup_rep(self, stage):
@@ -161,6 +206,49 @@ class VideoRecorder:
         if not self.enabled:
             return
         self.frames = []
+
+        # Start a new recording episode directory if recording is enabled.
+        if self.record_enabled and self.record_root:
+            self.record_step = 0
+            # Use the *next* episode_idx (since save_episode increments later); keep separate counter here.
+            # We base it on global_step to avoid collisions across restarts.
+            ep_name = f'episode_{int(self.global_step):09d}'
+            self.record_episode_dir = os.path.join(self.record_root, ep_name)
+            os.makedirs(os.path.join(self.record_episode_dir, 'frames'), exist_ok=True)
+            self.record_f_steps = open(os.path.join(self.record_episode_dir, 'steps.jsonl'), 'a')
+            meta = {
+                'created_at': time.time(),
+                'fps': int(self.fps),
+                'w': int(self.w),
+                'h': int(self.h),
+                'seconds': int(self.seconds),
+            }
+            try:
+                with open(os.path.join(self.record_episode_dir, 'meta.json'), 'w') as f:
+                    f.write(json.dumps(meta))
+            except Exception:
+                pass
+        else:
+            self.record_episode_dir = ''
+            self.record_f_steps = None
+
+    def record_step_v4(self, rgb, step_obj: dict):
+        if not self.record_enabled or not self.record_episode_dir or self.record_f_steps is None:
+            return
+        try:
+            if (self.record_step % int(self.record_every)) == 0 and rgb is not None:
+                # Write frame
+                import imageio.v2 as imageio
+                fpath = os.path.join(self.record_episode_dir, 'frames', f'frame_{self.record_step:06d}.png')
+                imageio.imwrite(fpath, rgb)
+            step_obj = dict(step_obj)
+            step_obj['record_step'] = int(self.record_step)
+            self.record_f_steps.write(json.dumps(step_obj) + '\n')
+            self.record_f_steps.flush()
+        except Exception:
+            pass
+        finally:
+            self.record_step += 1
 
     def capture(self):
         if not self.enabled or self.annot is None:
@@ -258,6 +346,14 @@ class VideoRecorder:
         except Exception:
             pass
 
+        # Close recording file if open (end of episode).
+        try:
+            if self.record_f_steps is not None:
+                self.record_f_steps.close()
+        except Exception:
+            pass
+        self.record_f_steps = None
+
         return mp4_path
 
 
@@ -280,11 +376,140 @@ class Lite6ReachSim:
         self._get_world_pose = None
         self.video = VideoRecorder()
 
+        # Collision state
+        self._contact_sub = None
+        self._robot_prefix = None
+        self._coll_self = False
+        self._coll_world = False
+
+        # Contact-force polling (Isaac Core view)
+        self._rb_view = None
+
+    def _setup_contact_reporting(self):
+        """Enable PhysX contact reports for bodies and subscribe to events.
+
+        This is best-effort and aims to catch both self-collisions and collisions
+        with the world (table/ground)."""
+        try:
+            import omni
+            from pxr import PhysxSchema, UsdPhysics
+            from omni.physx import get_physx_interface
+
+            self._robot_prefix = str(self.stage_path)
+
+            # Apply contact report API to all rigid bodies under the robot.
+            for prim in self.stage.Traverse():
+                p = prim.GetPath().pathString
+                if not p.startswith(self._robot_prefix + '/'):
+                    continue
+                try:
+                    if not UsdPhysics.RigidBodyAPI(prim):
+                        continue
+                except Exception:
+                    # Some prims may not support the schema query.
+                    continue
+                try:
+                    api = PhysxSchema.PhysxContactReportAPI.Apply(prim)
+                    # Low threshold so we see contacts even for gentle taps.
+                    if api and api.GetThresholdAttr():
+                        api.GetThresholdAttr().Set(0.0)
+                except Exception:
+                    pass
+
+            # Subscribe to contact reports.
+            # API surface differs across Isaac Sim/Kit versions, so try a few.
+            physx = get_physx_interface()
+            try:
+                from omni.physx import get_physx_simulation_interface
+                physx_sim = get_physx_simulation_interface()
+            except Exception:
+                physx_sim = None
+
+            def _extract_paths(evt):
+                # Try to robustly extract prim paths for the 2 actors involved.
+                a = b = None
+                # Common attribute names (vary by Isaac/Kit versions).
+                for k in ('actor0', 'body0', 'rigid_body0', 'prim_path0', 'path0'):
+                    if hasattr(evt, k):
+                        a = getattr(evt, k)
+                        break
+                for k in ('actor1', 'body1', 'rigid_body1', 'prim_path1', 'path1'):
+                    if hasattr(evt, k):
+                        b = getattr(evt, k)
+                        break
+                # Some versions deliver a dict-like event.
+                if isinstance(evt, dict):
+                    a = a or evt.get('actor0') or evt.get('body0') or evt.get('path0')
+                    b = b or evt.get('actor1') or evt.get('body1') or evt.get('path1')
+                # Convert to strings.
+                try:
+                    a = a.pathString  # pxr.Sdf.Path
+                except Exception:
+                    pass
+                try:
+                    b = b.pathString
+                except Exception:
+                    pass
+                if a is not None:
+                    a = str(a)
+                if b is not None:
+                    b = str(b)
+                return a, b
+
+            def _on_contact(evt):
+                try:
+                    a, b = _extract_paths(evt)
+                    if not a or not b:
+                        return
+                    rp = self._robot_prefix
+                    a_is = a.startswith(rp)
+                    b_is = b.startswith(rp)
+                    if not (a_is or b_is):
+                        return
+                    if a_is and b_is:
+                        self._coll_self = True
+                    else:
+                        self._coll_world = True
+                except Exception:
+                    return
+
+            # Store subscription handle so it doesn't get GC'd.
+            sub = None
+            if hasattr(physx, 'subscribe_contact_report_events'):
+                sub = physx.subscribe_contact_report_events(_on_contact)
+            elif physx_sim is not None and hasattr(physx_sim, 'subscribe_contact_report_events'):
+                sub = physx_sim.subscribe_contact_report_events(_on_contact)
+            else:
+                # Dump available subscribe methods to the log for debugging.
+                try:
+                    avail = [n for n in dir(physx) if 'subscribe' in n]
+                except Exception:
+                    avail = []
+                try:
+                    avail_sim = [n for n in dir(physx_sim) if 'subscribe' in n] if physx_sim is not None else []
+                except Exception:
+                    avail_sim = []
+                print(f'CONTACT_REPORT_NO_SUBSCRIBE physx={avail} sim={avail_sim}', flush=True)
+                sub = None
+            self._contact_sub = sub
+            if self._contact_sub is not None:
+                print('CONTACT_REPORT_SUBSCRIBED', flush=True)
+        except Exception as e:
+            print(f'CONTACT_REPORT_SETUP_FAILED {e}', flush=True)
+            self._contact_sub = None
+
+    def _clear_collisions(self):
+        self._coll_self = False
+        self._coll_world = False
+
     def start(self):
         ws = "/home/r91/ws_xarm"
         urdf_path = f"{ws}/isaac_bridge/lite6_isaac.urdf"
 
-        self.app = SimulationApp({"renderer": "RayTracedLighting", "headless": True})
+                # Toggle GUI with env var. Default remains headless for performance.
+        # Set LITE6_GUI=1 to show the Isaac Sim window.
+        gui = os.environ.get('LITE6_GUI', '').strip().lower() in ('1','true','yes','y','on')
+        self.app = SimulationApp({"renderer": "RayTracedLighting", "headless": (not gui)})
 
         import omni
         import omni.kit.commands
@@ -310,6 +535,11 @@ class Lite6ReachSim:
         )
         if not status:
             raise RuntimeError("URDF import failed")
+
+        # Some Kit versions return a list of prim paths.
+        if isinstance(stage_path, (list, tuple)):
+            stage_path = stage_path[0] if stage_path else stage_path
+        stage_path = str(stage_path)
 
         self.stage = omni.usd.get_context().get_stage()
         # Debug visual: small red cube to verify camera/render pipeline
@@ -391,6 +621,16 @@ class Lite6ReachSim:
         if not self.art.handles_initialized:
             raise RuntimeError(f"{self.stage_path} is not an articulation")
 
+        # Enable collision monitoring.
+        # 1) Prefer per-step contact-force polling via an Isaac Core view (more robust across versions).
+        # Delay view creation until after a few sim steps so prims are fully created.
+        self._rb_view = None
+
+        # 2) Also attempt PhysX contact report subscription (optional; may not exist in this build).
+        self._setup_contact_reporting()
+
+        self._render_counter = 0
+
         self.ee_path = None
         for prim in self.stage.Traverse():
             p = prim.GetPath().pathString
@@ -401,7 +641,23 @@ class Lite6ReachSim:
             raise RuntimeError("Could not find link_eef prim")
 
         for _ in range(10):
-            self.sim.step(render=self.video.enabled)
+            self._sim_step()
+
+        # Create contact-force view after startup steps.
+        try:
+            from omni.isaac.core.prims import RigidPrimView
+            # RigidPrimView globbing support varies; single-level wildcard is reliable.
+            expr = f"{self.stage_path}/*"
+            self._rb_view = RigidPrimView(
+                prim_paths_expr=expr,
+                name="lite6_rigid_bodies",
+                track_contact_forces=True,
+            )
+            self._rb_view.initialize()
+            print(f'CONTACT_MONITOR_VIEW_READY {expr}', flush=True)
+        except Exception as e:
+            self._rb_view = None
+            print(f'CONTACT_MONITOR_VIEW_FAILED {e}', flush=True)
 
     def close(self):
         if self.app is not None:
@@ -410,6 +666,27 @@ class Lite6ReachSim:
             except Exception:
                 pass
             self.app = None
+
+    def _render_cfg(self):
+        # GUI stability: optionally render only every N sim steps.
+        try:
+            n = int(os.environ.get('LITE6_RENDER_EVERY', '1') or 1)
+        except Exception:
+            n = 1
+        return max(1, n)
+
+    def _should_render(self):
+        if not getattr(self.video, 'enabled', False):
+            return False
+        n = self._render_cfg()
+        c = int(getattr(self, '_render_counter', 0) or 0)
+        return (c % n) == 0
+
+    def _sim_step(self):
+        # Wrapper to keep render throttling consistent everywhere.
+        self.sim.step(render=self._should_render())
+        self._render_counter = int(getattr(self, '_render_counter', 0) or 0) + 1
+
 
     def _apply_q(self, q):
         # Use position targets to drive joints (more reliable than set_joint_positions alone).
@@ -448,7 +725,10 @@ class Lite6ReachSim:
         pos, _ = self._get_world_pose(self.ee_path)
         return np.array(pos, np.float32)
 
-    def reset(self, logdir='', video=None, video_every=0, download=None, cfg_patch=None):
+    def reset(self, logdir='', video=None, video_every=0, download=None, record_v4=None, cfg_patch=None):
+        # Clear any latched collision flags from previous episodes.
+        self._clear_collisions()
+
         # Apply per-run config patches from the RL side (safe, allowlisted fields only).
         cfg_patch = cfg_patch or {}
         try:
@@ -466,7 +746,17 @@ class Lite6ReachSim:
         # configure video capture on first reset
         if video is None:
             video = {}
-        self.video.configure(logdir, video, video_every, download)
+        # Optional overrides for GUI stability.
+        try:
+            if os.environ.get('LITE6_VIDEO_FPS'):
+                video['fps'] = int(os.environ.get('LITE6_VIDEO_FPS'))
+            if os.environ.get('LITE6_VIDEO_W'):
+                video['w'] = int(os.environ.get('LITE6_VIDEO_W'))
+            if os.environ.get('LITE6_VIDEO_H'):
+                video['h'] = int(os.environ.get('LITE6_VIDEO_H'))
+        except Exception:
+            pass
+        self.video.configure(logdir, video, video_every, download, record_v4)
         if self.video.enabled:
             print(f'VIDEO_ENABLED logdir={self.video.logdir} fps={self.video.fps} size={self.video.w}x{self.video.h} seconds={self.video.seconds}', flush=True)
         if self.video.enabled and self.video.annot is None:
@@ -481,6 +771,7 @@ class Lite6ReachSim:
                 pass
             self.video.setup_rep(self.stage)
         self.video.reset_episode()
+        self._render_counter = 0
 
         self.t = 0
         self.q[:] = 0.0
@@ -488,7 +779,7 @@ class Lite6ReachSim:
         self._randomize_target()
         self._apply_q(self.q)
         for _ in range(self.cfg.settle_steps):
-            self.sim.step(render=self.video.enabled)
+            self._sim_step()
 
         ee = self._ee_pos()
         dist = float(np.linalg.norm(ee - self.target))
@@ -503,6 +794,23 @@ class Lite6ReachSim:
 
         # Capture after markers are placed
         self.video.capture()
+        # Record DreamerV4 dataset step (initial observation)
+        try:
+            rgb = self.video.frames[-1] if self.video.frames else None
+            self.video.record_step_v4(rgb, {
+                'time': time.time(),
+                'global_step': int(self.video.global_step),
+                't': int(self.t),
+                'q': [float(x) for x in self.q.tolist()],
+                'ee_pos': [float(x) for x in ee.tolist()],
+                'target_pos': [float(x) for x in self.target.tolist()],
+                'action': None,
+                'reward': float(-dist),
+                'is_last': False,
+                'is_terminal': False,
+            })
+        except Exception:
+            pass
 
         if self.video.enabled:
             self.video.debug_lines = [
@@ -519,12 +827,44 @@ class Lite6ReachSim:
         }
 
     def step(self, action, global_step=None):
+        # Clear collision flags for this step.
+        # The contact callback may latch them during sim.step() calls below.
+        self._clear_collisions()
+
         a = np.clip(np.array(action, np.float32), -1.0, 1.0)
         dq = a * float(self.cfg.action_scale)
         self.q = self.q + dq
+        # Safety: clamp joints to a conservative range to prevent fold-up collapse.
+        # (These are generic bounds; tune to your Lite6 URDF limits if needed.)
+        self.q = np.clip(self.q, -2.8, 2.8)
+
+        # Heuristic fold guard (self-collision prevention): terminate early when the
+        # arm enters very folded configurations.
+        if bool(getattr(self.cfg, 'fold_guard', True)):
+            try:
+                q1 = float(self.q[1])
+                q2 = float(self.q[2])
+                if abs(q1) > float(getattr(self.cfg, 'fold_q1_thresh', 2.2)) and abs(q2) > float(getattr(self.cfg, 'fold_q2_thresh', 2.2)):
+                    self._coll_self = True
+                    print(f'FOLD_GUARD_TRIGGER q1={q1:.3f} q2={q2:.3f} t={self.t} gstep={self.video.global_step}', flush=True)
+            except Exception:
+                pass
+
         self._apply_q(self.q)
         for _ in range(self.cfg.settle_steps):
-            self.sim.step(render=self.video.enabled)
+            self._sim_step()
+
+        # Poll contact forces (robust collision monitor).
+        if bool(getattr(self.cfg, 'contact_monitor', True)) and self._rb_view is not None:
+            try:
+                forces = self._rb_view.get_net_contact_forces()
+                # forces: (N,3)
+                maxf = float(np.max(np.linalg.norm(forces, axis=-1))) if forces is not None and len(forces) else 0.0
+                if maxf > float(getattr(self.cfg, 'contact_force_thresh', 1.0) or 1.0):
+                    self._coll_world = True
+            except Exception:
+                pass
+
         self.t += 1
         if global_step is None:
             self.video.global_step += 1
@@ -573,7 +913,12 @@ class Lite6ReachSim:
                 f'succ_ee={int(success_ee)} succ_vis={int(success_vis)}',
             ]
 
-        done = (self.t >= self.cfg.episode_len) or success_ee or success_vis
+        # Collision detection (best-effort): terminate and penalize.
+        coll_self = bool(getattr(self, '_coll_self', False))
+        coll_world = bool(getattr(self, '_coll_world', False))
+        coll = coll_self or coll_world
+
+        done = (self.t >= self.cfg.episode_len) or success_ee or success_vis or (bool(getattr(self.cfg, 'collision_terminate', True)) and coll)
 
         mp4 = None
         if done:
@@ -582,13 +927,70 @@ class Lite6ReachSim:
         if mp4:
             print(f'VIDEO_SAVED {mp4}', flush=True)
 
-        # Reward: task + smoothness shaping
+        # Reward: task + smoothness shaping + collision penalties
         w_u = float(getattr(self.cfg, 'reward_w_u', 0.0) or 0.0)
         w_du = float(getattr(self.cfg, 'reward_w_du', 0.0) or 0.0)
         du = a - getattr(self, '_prev_action', np.zeros_like(a))
         rew = float(-dist - w_u * float(np.sum(a * a)) - w_du * float(np.sum(du * du)))
+
+        if coll_self:
+            # If fold guard triggered, allow overriding penalty.
+            rew -= float(getattr(self.cfg, 'fold_penalty', None) or getattr(self.cfg, 'collision_penalty_self', 50.0) or 50.0)
+        elif coll_world:
+            rew -= float(getattr(self.cfg, 'collision_penalty_world', 20.0) or 20.0)
+
         self._prev_action = a.copy()
 
+        # Telemetry: log joint/action/reward for supervisor debugging.
+        try:
+            if bool(getattr(self.cfg, 'telemetry_enabled', True)):
+                every = int(getattr(self.cfg, 'telemetry_every', 5) or 5)
+                if every <= 0:
+                    every = 1
+                if (self.video.global_step % every) == 0:
+                    rec = {
+                        'time': time.time(),
+                        'global_step': int(self.video.global_step),
+                        't': int(self.t),
+                        'q': [float(x) for x in self.q.tolist()],
+                        'a': [float(x) for x in a.tolist()],
+                        'dist': float(dist),
+                        'reward': float(rew),
+                        'success_ee': bool(success_ee),
+                        'success_vis': bool(success_vis),
+                        'collision_self': bool(coll_self),
+                        'collision_world': bool(coll_world),
+                    }
+                    p = str(getattr(self.cfg, 'telemetry_path', '/tmp/lite6_joint_telemetry.jsonl') or '/tmp/lite6_joint_telemetry.jsonl')
+                    with open(p, 'a') as f:
+                        f.write(json.dumps(rec) + '\n')
+        except Exception:
+            pass
+
+
+        # Record DreamerV4 dataset step (obs+action+reward+done)
+        try:
+            rgb = self.video.frames[-1] if self.video.frames else None
+            self.video.record_step_v4(rgb, {
+                'time': time.time(),
+                'global_step': int(self.video.global_step),
+                't': int(self.t),
+                'q': [float(x) for x in self.q.tolist()],
+                'ee_pos': [float(x) for x in ee.tolist()],
+                'target_pos': [float(x) for x in self.target.tolist()],
+                'action': [float(x) for x in a.tolist()],
+                'dist': float(dist),
+                'vis_dist_px': None if vis_dist is None else float(vis_dist),
+                'success_ee': bool(success_ee),
+                'success_vis': bool(success_vis),
+                'collision_self': bool(coll_self),
+                'collision_world': bool(coll_world),
+                'reward': float(rew),
+                'is_last': bool(done),
+                'is_terminal': bool(coll),
+            })
+        except Exception:
+            pass
         out = {
             'q': self.q.tolist(),
             'ee_pos': ee.tolist(),
@@ -597,9 +999,12 @@ class Lite6ReachSim:
             'vis_dist_px': None if vis_dist is None else float(vis_dist),
             'success_ee': bool(success_ee),
             'success_vis': bool(success_vis),
+            'collision_self': bool(coll_self),
+            'collision_world': bool(coll_world),
             'reward': float(rew),
             'is_last': bool(done),
-            'is_terminal': False,
+            # Treat collisions as terminal.
+            'is_terminal': bool(coll),
         }
         if mp4:
             out['video_path'] = mp4
@@ -655,6 +1060,7 @@ def serve(host='127.0.0.1', port=5555):
                         msg.get('video', {}),
                         msg.get('video_every', 0),
                         msg.get('download', None),
+                        msg.get('record_v4', None),
                         msg.get('cfg', None),
                     ))
                 elif cmd == 'step':

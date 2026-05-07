@@ -1,0 +1,32 @@
+{
+  "robot": "ros2:/xarm",
+  "name": "lite6",
+  "mode": "full",
+  "out_dir": "robot_assets/lite6_ui_test",
+  "options": {
+    "cameras": {
+      "mode": "auto",
+      "rtsp_urls": []
+    },
+    "recording": {
+      "n_episodes": 500,
+      "episode_dt_s": 2.0,
+      "record_hz": 30.0,
+      "strategy": "random_joint_delta"
+    },
+    "rules_profile": "default",
+    "reconstruction": {
+      "voxel_m": 0.005,
+      "tri_target": 20000,
+      "max_links": 8
+    },
+    "urdf": {
+      "density_kg_m3": 2700.0,
+      "collision_tri_target": 500
+    },
+    "isaac": {
+      "enable": true,
+      "merge_fixed_joints": true
+    }
+  }
+}

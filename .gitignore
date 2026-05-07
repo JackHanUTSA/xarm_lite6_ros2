@@ -12,6 +12,21 @@ rl/__pycache__/
 rl/scripts/__pycache__/
 isaac_bridge/scripts/__pycache__/
 rl/logdir/
+rl/logdir_v3/
+rl/logdir_v3_bak_*/
+rl/logdir_v3_ball_test/
+rl/logdir_v3_ball_train/
+rl/logdir_v4/
+rl/logdir_v4_ball_test/
+rl/logs/
+rl/dreamer4_data/
+rl/dreamer4_logs/
+rl/dreamer4_shards/
+rl/third_party/
+runs/
+vision_seg/data/
+vision_seg/runs/
+*.pt
 # Python artifacts
 __pycache__/
 *.pyc

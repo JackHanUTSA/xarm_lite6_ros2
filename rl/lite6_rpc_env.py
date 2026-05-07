@@ -65,6 +65,11 @@ class Lite6RPCEnv(embodied.Env):
     video_every=0,
     download_dir='~/Downloads',
     download_prefix='robotarm training video',
+    # Task variant / grasp config.
+    task_variant='reach',
+    ball_radius=None,
+    grasp_dist_thresh=None,
+    lift_height_thresh=None,
     # Patchable knobs forwarded to the worker on reset.
     action_scale=None,
     reward_w_u=None,
@@ -84,6 +89,11 @@ class Lite6RPCEnv(embodied.Env):
     self._download_prefix = str(download_prefix)
     self._sock = None
     self._done = True
+
+    self._task_variant = str(task_variant)
+    self._ball_radius = None if ball_radius is None else float(ball_radius)
+    self._grasp_dist_thresh = None if grasp_dist_thresh is None else float(grasp_dist_thresh)
+    self._lift_height_thresh = None if lift_height_thresh is None else float(lift_height_thresh)
 
     self._action_scale = None if action_scale is None else float(action_scale)
     self._reward_w_u = None if reward_w_u is None else float(reward_w_u)
@@ -127,6 +137,10 @@ class Lite6RPCEnv(embodied.Env):
     self._connect()
     if action['reset'] or self._done:
       cfg = {
+        'task_variant': getattr(self, '_task_variant', 'reach'),
+        'ball_radius': getattr(self, '_ball_radius', None),
+        'grasp_dist_thresh': getattr(self, '_grasp_dist_thresh', None),
+        'lift_height_thresh': getattr(self, '_lift_height_thresh', None),
         'action_scale': getattr(self, '_action_scale', None),
         'reward_w_u': getattr(self, '_reward_w_u', None),
         'reward_w_du': getattr(self, '_reward_w_du', None),

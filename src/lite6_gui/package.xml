@@ -11,6 +11,8 @@
   <depend>sensor_msgs</depend>
   <depend>trajectory_msgs</depend>
   <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <exec_depend>lite6_imitation_bridge</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

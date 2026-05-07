@@ -1,0 +1,53 @@
+type: object
+description: Schema for a human-readable rigid calibration from FreeMoCap space into the Lite6 workspace frame.
+required:
+  - source_frame
+  - target_frame
+  - rotation_matrix
+  - translation_vector
+properties:
+  source_frame:
+    type: string
+    description: Name of the input coordinate frame, typically freemocap.
+  target_frame:
+    type: string
+    description: Name of the output coordinate frame, typically lite6_workspace.
+  notes:
+    type: string
+    description: Optional operator notes about the known-pose calibration procedure.
+  known_pose_name:
+    type: string
+    description: Optional short name for the known-pose procedure or fiducial layout used to collect point correspondences.
+  workspace_description:
+    type: string
+    description: Human-readable description of the Lite6 workspace frame origin, such as the robot base frame or a task-surface reference point.
+  workspace_origin:
+    type: array
+    minItems: 3
+    maxItems: 3
+    items:
+      type: number
+    description: Origin of the Lite6 workspace frame expressed in target-frame coordinates.
+  fit_rmse:
+    type: number
+    minimum: 0.0
+    description: Root-mean-square fit error in target-frame distance units.
+  rotation_matrix:
+    type: array
+    minItems: 3
+    maxItems: 3
+    items:
+      type: array
+      minItems: 3
+      maxItems: 3
+      items:
+        type: number
+    description: 3x3 rigid rotation matrix mapping source points into the target frame.
+  translation_vector:
+    type: array
+    minItems: 3
+    maxItems: 3
+    items:
+      type: number
+    description: 3D translation vector applied after rotation.
+additionalProperties: false
